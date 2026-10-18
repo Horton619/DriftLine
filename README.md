@@ -19,3 +19,7 @@ Art styles: Clean, Low poly, Comic (depth-based ink outlines, flat tones, halfto
 - **Output:** logo overlay (size, position, opacity, shadow), Fill / 16:9 / 21:9 / 32:9 framing, and a clean view with no controls for screen capture (H or Esc to exit).
 
 Run locally: serve the folder with any static server (for example `npx serve .`). Deploys as-is to Vercel or GitHub Pages.
+
+## Living details
+
+Windows switch on and off over a minute or two and a few flicker with TVs; brake lights flare at the signals; tower cranes swing; steam drifts off rooftops with the wind; aircraft cross the sky with nav lights and strobes. The Intersection has pedestrians who gather at the corners and cross on the walk signal (umbrellas when it rains). Towers can be twisted, tapered or round, with helipads and green roofs. Skyline keeps the classic box shapes.
