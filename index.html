@@ -596,6 +596,12 @@ function loadPhotoSky(entry) {
       new THREE.TextureLoader().loadAsync(`assets/sky/${entry.id}_bg.jpg`),
     ]);
     bg.colorSpace = THREE.SRGBColorSpace; bg.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    // phones and Low quality get a 4K sky: an 8K texture costs about 170 MB of GPU memory
+    if (S.quality === 'low' || renderer.capabilities.maxTextureSize < 8192 || coarse) {
+      const cv = document.createElement('canvas'); cv.width = 4096; cv.height = 2048;
+      cv.getContext('2d').drawImage(bg.image, 0, 0, 4096, 2048);
+      bg.image = cv; bg.needsUpdate = true;
+    }
     const { data, width: W, height: H } = hdr.image;
     let max = 0, mi = 0, sum = 0, n = 0;
     for (let y = 0; y < H / 2; y++) for (let x = 0; x < W; x++) {
@@ -636,6 +642,7 @@ async function selectPhotoSky(id) {
   try {
     const d = await loadPhotoSky(entry);
     if (photo.loading !== entry.id) return;
+    if (photo.cur && photo.cur !== d) photo.cur.bg.dispose();
     photo.cur = d; photo.entry = entry; photo.envKey = '';
     bgSphere.material.map = d.bg; bgSphere.material.needsUpdate = true;
     if (entry.bg != null && S.skyBg === 1) { S.skyBg = entry.bg; if (outs.skyBg) { outs.skyBg.inp.value = S.skyBg; outs.skyBg.out.textContent = CTRL.skyBg.fmt(S.skyBg); } }
@@ -1376,7 +1383,7 @@ const SCENES = {
       const city = buildCity({ cx: 0, cz: 0, nx: 9, nz: 6, block: 46, road: 14, maxH: 140, seed: 7 });
       g.add(city.group);
       const R = rng(12), trees = [];
-      for (let x = -1100; x < 1100; x += 9 + R() * 10) { const z = 292 - R() * 6; trees.push({ x, y: hf(x, z), z, s: 0.7 + R() * 0.4 }); }
+      for (let x = -1100; x < 1100; x += 5 + R() * 22) { if (noise2(x * 0.01, 7.3) < -0.25) continue; const z = 294 - R() * 14; trees.push({ x, y: hf(x, z), z, s: 0.55 + R() * 0.7, broad: R() < 0.45 }); }
       for (let k = 0; k < 9000 * S.trees && trees.length < 2600 * S.trees; k++) {
         const x = (R() - 0.5) * 2200, z = -1100 + R() * 1350, r = Math.hypot(x, z);
         if (Math.abs(x) < 300 && z > -210 && z < 230) continue;
