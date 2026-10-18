@@ -286,6 +286,7 @@ const S = {
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
 const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); };
 const lerp = (a, b, t) => a + (b - a) * t;
+const fract1 = x => x - Math.floor(x);
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const GRAD = [[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
 const PERM = new Uint8Array(512);
@@ -1056,11 +1057,11 @@ const winU = { uLights: { value: 0 }, uLit: { value: 0.55 }, uGlass: { value: 0.
 M.bld.onBeforeCompile = (sh) => {
   sh.uniforms.uLights = winU.uLights; sh.uniforms.uLit = winU.uLit; sh.uniforms.uGlass = winU.uGlass;
   sh.uniforms.tGD = TEX.gravD; sh.uniforms.uTexOn = TEX.on; sh.uniforms.tFac = TEX.fac; sh.uniforms.tFacN = TEX.facN; sh.uniforms.uFacOn = TEX.facOn;
-  sh.vertexShader = 'attribute vec3 aBld;\nvarying vec3 vBld;\nvarying vec3 vWPos;\nvarying vec3 vWN;\nvarying vec3 vLP;\nvarying vec3 vLN;\nvarying vec3 vWT;\nvarying float vH;\n' + sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
-    vBld = aBld; vLN = objectNormal; vH = 1.0;
+  sh.vertexShader = 'attribute vec3 aBld;\nvarying vec3 vBld;\nvarying vec3 vWPos;\nvarying vec3 vWN;\nvarying vec3 vLP;\nvarying vec3 vLN;\nvarying vec3 vWT;\nvarying float vH;\nvarying vec2 vHalf;\n' + sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+    vBld = aBld; vLN = objectNormal; vH = 1.0; vHalf = vec2(0.5);
     #ifdef USE_INSTANCING
       vec3 isc = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
-      vLP = transformed * isc; vH = isc.y;
+      vLP = transformed * isc; vH = isc.y; vHalf = isc.xz * 0.5;
       vWT = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * vec3(-objectNormal.z, 0.0, objectNormal.x) + 1e-5);
     #else
       vLP = transformed; vWT = vec3(1.0, 0.0, 0.0);
@@ -1073,38 +1074,79 @@ M.bld.onBeforeCompile = (sh) => {
       vWN = normalize(mat3(modelMatrix) * objectNormal);
     #endif
     vWPos = wq.xyz;`);
-  sh.fragmentShader = 'uniform float uLights;\nuniform float uLit;\nuniform float uGlass;\nuniform float uTexOn;\nuniform float uFacOn;\nuniform sampler2D tGD;\nuniform sampler2DArray tFac;\nuniform sampler2DArray tFacN;\nvarying vec3 vBld;\nvarying vec3 vWPos;\nvarying vec3 vWN;\nvarying vec3 vLP;\nvarying vec3 vLN;\nvarying vec3 vWT;\nvarying float vH;\nfloat gWin = 0.0; float gBh = 0.0; float gType = 1.0; float gL = 0.0; float gFrame = 0.0; float gStreak = 0.5; float gStore = 0.0; float gLod = 0.0; vec2 gId = vec2(0.0); vec2 gFUV = vec2(0.0); vec3 gT = vec3(1.0, 0.0, 0.0);\n' + TEXGLSL + `
+  sh.fragmentShader = 'uniform float uLights;\nuniform float uLit;\nuniform float uGlass;\nuniform float uTexOn;\nuniform float uFacOn;\nuniform sampler2D tGD;\nuniform sampler2DArray tFac;\nuniform sampler2DArray tFacN;\nvarying vec3 vBld;\nvarying vec3 vWPos;\nvarying vec3 vWN;\nvarying vec3 vLP;\nvarying vec3 vLN;\nvarying vec3 vWT;\nvarying float vH;\nvarying vec2 vHalf;\n'
+    + 'float gWin = 0.0; float gBh = 0.0; float gType = 1.0; float gL = 0.0; float gFrame = 0.0; float gStreak = 0.5; float gStore = 0.0; float gLod = 0.0; vec2 gId = vec2(0.0); vec2 gFUV = vec2(0.0); vec3 gT = vec3(1.0, 0.0, 0.0);\n'
+    + 'float gVar = 0.0; float gWinY = 0.5; float gSpan = 0.0; float gFin = 0.0; float gRecess = 0.0; float gBalc = 0.0; float gMech = 0.0; float gFY = 0.0; float gCurt = 0.0; float gHsh = 0.0; float gPar = 0.0; float gLouAA = 0.0;\n' + TEXGLSL + `
   float facScale(float L){ return L < 0.5 ? 1.0 : L < 1.5 ? 2.09 : L < 2.5 ? 2.0 : L < 3.5 ? 3.0 : L < 4.5 ? 3.0 : L < 5.5 ? 2.16 : L < 6.5 ? 8.0 : 1.96; }
   float pls(float a, float b, float x, float w){ w = max(w, 1e-4); return clamp((min(x + w, b) - max(x - w, a)) / (2.0 * w), 0.0, 1.0); }
+  float h21(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
   vec3 facAvg(float L){ return L < 0.5 ? vec3(0.145, 0.085, 0.068) : L < 1.5 ? vec3(0.033, 0.036, 0.041) : L < 2.5 ? vec3(0.459, 0.374, 0.28) : L < 3.5 ? vec3(0.349, 0.267, 0.19)
     : L < 4.5 ? vec3(0.119, 0.184, 0.068) : L < 5.5 ? vec3(0.259, 0.227, 0.157) : L < 6.5 ? vec3(0.316, 0.231, 0.157) : vec3(0.426, 0.394, 0.334); }
+  vec3 glassTint(float h){ return h < 0.2 ? vec3(0.04, 0.075, 0.12) : h < 0.38 ? vec3(0.05, 0.09, 0.085) : h < 0.52 ? vec3(0.09, 0.07, 0.05)
+    : h < 0.76 ? vec3(0.085, 0.09, 0.1) : h < 0.86 ? vec3(0.03, 0.033, 0.04) : vec3(0.04, 0.09, 0.1); }
   ` + sh.fragmentShader.replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
-    gType = vBld.x; gL = vBld.y; gBh = vBld.z;
+    float round_ = step(9.5, vBld.x);
+    gType = vBld.x - round_ * 10.0; gL = vBld.y; gBh = vBld.z;
     vec2 ln = normalize(vLN.xz + 1e-5);
-    float u0 = dot(vLP.xz, vec2(-ln.y, ln.x)) + vBld.z * 37.0;
+    float boxF = (1.0 - round_) * step(0.995, max(abs(ln.x), abs(ln.y)));
+    float faceW = abs(ln.x) > 0.5 ? vHalf.y * 2.0 : vHalf.x * 2.0;
+    float uR = round_ > 0.5 ? atan(vLP.z, vLP.x) * vHalf.x : dot(vLP.xz, vec2(-ln.y, ln.x));
+    float u0 = boxF > 0.5 ? uR + faceW * 0.5 : uR + gBh * 37.0;
     float dU = fwidth(u0), dY = fwidth(vWPos.y);   // pixel footprint, taken outside any branch
     if (abs(vWN.y) < 0.5) {
       gT = vWT;
-      float floorH = 3.4 + fract(gBh * 3.7) * 0.6;
-      float fy = (vWPos.y - 0.3) / floorH;
-      float colW = gType < 0.5 ? 1.5 + fract(gBh * 9.1) * 0.7 : 2.4 + fract(gBh * 5.7) * 1.6;
-      vec2 f = fract(vec2(u0 / colW, fy)); gId = floor(vec2(u0 / colW, fy));
-      // box-filtered window masks; once a cell is only a few pixels wide, fade to its average so distant towers glow instead of shimmering
+      // every building draws its own facade system from its seed
+      float hA = fract(gBh * 13.37), hB = fract(gBh * 71.13), hC = fract(gBh * 29.71), hD = fract(gBh * 5.19);
+      gVar = floor(hA * 3.0);
+      float res = step(0.5, gType) * step(gType, 1.5);
+      float floorH = res > 0.5 ? 2.95 + hD * 0.45 : 3.7 + hD * 0.6;
+      float fy = (vWPos.y - 0.3) / floorH; gFY = fy;
+      float colW = gType < 0.5 ? 1.35 + hB * 0.9 : gType < 1.5 ? 2.6 + hB * 1.8 : 1.5 + hB * 1.2;
+      float pier = gType < 0.5 ? 0.2 + hC * 0.5 : gType < 1.5 ? 0.6 + hC * 1.1 : 0.4 + hC * 0.7;
+      float uc = u0 / colW, nb = 1e4;
+      if (boxF > 0.5 && faceW > colW + 2.0 * pier) { nb = max(1.0, floor((faceW - 2.0 * pier) / colW + 0.5)); colW = (faceW - 2.0 * pier) / nb; uc = (u0 - pier) / colW; }   // whole bays between corner piers
+      vec2 f = fract(vec2(uc, fy)); gId = floor(vec2(uc, fy));
       float wx = 0.5 * dU / colW, wy = 0.5 * dY / floorH;
       gLod = smoothstep(0.09, 0.3, max(wx, wy));
+      float det = 1.0 - gLod;
+      float inBay = nb < 1e3 ? pls(0.0, nb, uc, wx) : 1.0;
+      float w = 0.0, fr = 0.0, avg = 0.5;
       if (gType < 0.5) {
-        gWin = mix(pls(0.05, 0.95, f.x, wx) * pls(0.1, 0.93, f.y, wy), 0.9 * 0.83, gLod);
+        if (gVar < 0.5) { w = pls(0.04, 0.96, f.x, wx) * pls(0.07, 0.95, f.y, wy); avg = 0.81; gWinY = (f.y - 0.07) / 0.88; }
+        else if (gVar < 1.5) { float y0 = 0.26 + hD * 0.14; w = pls(0.03, 0.97, f.x, wx) * pls(y0, 0.97, f.y, wy); avg = 0.94 * (0.97 - y0); gSpan = pls(0.0, y0, f.y, wy) * det; gWinY = (f.y - y0) / (0.97 - y0); }
+        else { float fin = 0.1 + hD * 0.1; w = pls(fin, 1.0, f.x, wx) * pls(0.05, 0.96, f.y, wy); avg = (1.0 - fin) * 0.91; gFin = (1.0 - pls(fin, 1.0, f.x, wx)) * det; gWinY = (f.y - 0.05) / 0.91; }
+        fr = (1.0 - w) * det;
       } else if (gType < 1.5) {
-        float ww = 0.18 + fract(gBh * 4.3) * 0.12;
-        float inner = pls(ww, 1.0 - ww, f.x, wx) * pls(0.26, 0.76, f.y, wy), outer = pls(ww - 0.05, 1.05 - ww, f.x, wx) * pls(0.2, 0.81, f.y, wy);
-        gWin = mix(inner, (1.0 - 2.0 * ww) * 0.5, gLod);
-        gFrame = mix(outer - inner, (1.1 - 2.0 * ww) * 0.61 - (1.0 - 2.0 * ww) * 0.5, gLod);
+        float ww = 0.32 + hD * 0.36, wh0 = 0.22 + hB * 0.1, wh1 = wh0 + 0.42 + hC * 0.22, fx = f.x, wxx = wx;
+        if (gVar > 0.5 && gVar < 1.5) { fx = fract(f.x * 2.0); wxx = wx * 2.0; ww = min(0.78, ww * 1.4); }   // paired windows
+        if (gVar > 1.5) { wh0 = 0.1; wh1 = 0.86; ww = 0.6 + hD * 0.3; }                                       // balcony doors
+        float a = 0.5 - ww * 0.5, b = 0.5 + ww * 0.5;
+        float inner = pls(a, b, fx, wxx) * pls(wh0, wh1, f.y, wy), outer = pls(a - 0.05, b + 0.05, fx, wxx) * pls(wh0 - 0.05, wh1 + 0.035, f.y, wy);
+        float mull = hC > 0.5 ? inner * (1.0 - pls(0.0, 1.0, abs(fx - 0.5) / 0.03, wxx / 0.03)) * det : 0.0;
+        w = inner - mull; fr = (outer - inner) * det + mull; avg = ww * (wh1 - wh0) * (gVar > 0.5 && gVar < 1.5 ? 1.0 : 1.0);
+        gWinY = (f.y - wh0) / (wh1 - wh0);
+        gRecess = inner * smoothstep(0.78, 1.0, gWinY) * det;
+        if (gVar > 1.5) { float rail = mix(step(0.5, fract(u0 * 7.0)), 0.5, smoothstep(0.12, 0.35, dU * 7.0)); gBalc = (pls(0.0, 0.07, f.y, wy) + pls(0.07, 0.36, f.y, wy) * 0.55 * rail) * det; }
       } else {
-        gWin = mix(pls(0.3, 0.84, f.y, wy) * pls(0.03, 0.97, f.x, wx), 0.54 * 0.94, gLod);
+        float y0 = 0.2 + hD * 0.18, y1 = 0.86 + hC * 0.1;
+        float band = pls(y0, y1, f.y, wy);
+        w = band * pls(0.025, 0.975, f.x, wx); avg = (y1 - y0) * 0.95; fr = (band - w) * det; gWinY = (f.y - y0) / (y1 - y0);
       }
-      if (vWPos.y < 4.6) { gStore = 1.0; float sy = (vWPos.y - 0.3) / 4.3; gWin = mix(pls(0.06, 1.0, fract(u0 / 5.5), 0.5 * dU / 5.5) * pls(0.12, 0.85, sy, 0.5 * dY / 4.3), 0.94 * 0.73, gLod); gFrame = 0.0; }
-      roughnessFactor = mix(roughnessFactor, 0.04 + 0.08 * fract(gBh * 17.0), gWin * uGlass);
-      metalnessFactor = mix(metalnessFactor, 0.93, gWin * uGlass);
+      w *= inBay; fr *= inBay;
+      // plant floors on tall office towers, and a solid parapet at the top of every block
+      float mechN = 9.0 + floor(hD * 12.0);
+      gMech = (gType < 0.5 || gType > 1.5) && vH > 60.0 && gId.y > 3.0 && mod(gId.y, mechN) > mechN - 1.5 ? 1.0 : 0.0;
+      gPar = step(vH - (0.9 + hB * 1.1), vLP.y); gLouAA = smoothstep(0.12, 0.35, dY / floorH * 6.0);
+      float solid = max(gMech, gPar);
+      w *= 1.0 - solid; fr *= 1.0 - solid; gSpan *= 1.0 - solid; gFin *= 1.0 - solid; gBalc *= 1.0 - solid;
+      gWin = mix(w, avg * (1.0 - solid), gLod);
+      gFrame = fr;
+      if (vLP.y < 4.3 && vWPos.y - vLP.y < 9.0) { gStore = 1.0; float sy = (vWPos.y - 0.3) / 4.3; gWin = mix(pls(0.06, 1.0, fract(u0 / 5.5), 0.5 * dU / 5.5) * pls(0.12, 0.85, sy, 0.5 * dY / 4.3), 0.94 * 0.73, gLod); gFrame = 0.0; gSpan = gFin = gBalc = gRecess = gMech = 0.0; gWinY = (sy - 0.12) / 0.73; }
+      gHsh = h21(gId + floor(vWPos.xz * 0.02) * 17.0 + vec2(vWN.x, vWN.z) * 3.0);
+      gCurt = res > 0.5 ? step(0.62, fract(gHsh * 3.7)) * det : 0.0;
+      float glassK = gWin * uGlass * (1.0 - gCurt * 0.7);
+      roughnessFactor = mix(roughnessFactor, 0.03 + 0.1 * hB, glassK);
+      metalnessFactor = mix(metalnessFactor, 0.72 + 0.24 * hC, glassK);
       gStreak = tNoise(vec2(u0 * 0.7, vWPos.y * 0.035)) * 0.6 + tNoise(vec2(u0 * 0.15, vWPos.y * 0.008)) * 0.4;
       gFUV = vec2(u0, vWPos.y) / facScale(gL);
     }`).replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
@@ -1114,26 +1156,42 @@ M.bld.onBeforeCompile = (sh) => {
       normal = normalize(normal + (viewMatrix * vec4(dn, 0.0)).xyz);
     }`).replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
     if (abs(vWN.y) < 0.5) {
-      float bh = gBh; vec2 id = gId; float win = gWin;
+      float bh = gBh, win = gWin, hB = fract(bh * 71.13), hC = fract(bh * 29.71), hE = fract(bh * 47.3);
       vec3 body = diffuseColor.rgb;
       if (uFacOn > 0.5) {
         vec3 ft = mix(texture(tFac, vec3(gFUV, gL)).rgb, texture(tFac, vec3(gFUV * 0.37 + 0.21, gL)).rgb, 0.3);
         float keep = (gL < 0.5 || (gL > 1.5 && gL < 2.5)) ? 0.7 : 0.2;
         body = mix(ft / facAvg(gL) * body * 0.85, ft * 1.25, keep);
       }
-      if (gType < 0.5) body = mix(body, vec3(0.36, 0.38, 0.4), 0.55);
+      vec3 tint = glassTint(hB);
+      vec3 frameC;
+      if (gType < 0.5 || gType > 1.5) frameC = hC > 0.3 ? vec3(0.62, 0.64, 0.66) : vec3(0.09, 0.095, 0.1);
+      else frameC = hC > 0.66 ? vec3(0.86, 0.85, 0.81) : hC > 0.33 ? vec3(0.1, 0.1, 0.105) : vec3(0.3, 0.22, 0.15);
+      if (gType < 0.5) body = mix(body, frameC, 0.6);                      // glass towers: what isn't glass is mullion and pier
       body *= 0.8 + 0.28 * gStreak;
-      body *= 1.0 - gFrame * 0.5;
-      vec3 tint = gType < 0.5 ? mix(vec3(0.03, 0.06, 0.08), vec3(0.07, 0.06, 0.045), step(0.5, fract(bh * 7.0))) : vec3(0.03, 0.035, 0.045);
-      diffuseColor.rgb = mix(body, tint, win * 0.94);
-      float hsh = fract(sin(dot(id + floor(vWPos.xz * 0.02) * 17.0 + vec2(vWN.x, vWN.z) * 3.0, vec2(12.9898, 78.233))) * 43758.5453);
-      if (gType < 0.5) hsh = fract(sin((id.y + vBld.z * 97.0) * 12.9898) * 43758.5453) * 0.8 + fract(sin(dot(vec2(floor(id.x / 4.0), id.y), vec2(12.9898, 78.233))) * 43758.5453) * 0.2;
+      body = mix(body, frameC, clamp(gFrame, 0.0, 1.0) * 0.85);
+      body = mix(body, mix(tint * 3.0, frameC, hE), gSpan);              // spandrel panels
+      body = mix(body, frameC * 1.15, gFin);                             // vertical fins
+      body = mix(body, vec3(0.62, 0.6, 0.57), gBalc);                    // balcony slab edges and railings
+      if (gMech > 0.5) body = vec3(0.1, 0.105, 0.11) * (0.7 + 0.45 * mix(step(0.5, fract(gFY * 6.0)), 0.5, gLouAA));   // louvres
+      vec3 wcol = mix(tint * 1.5, mix(vec3(0.62, 0.55, 0.45), vec3(0.75, 0.74, 0.7), fract(gHsh * 9.1)), gCurt * 0.75);   // curtains in some windows
+      wcol *= 1.0 - gRecess * 0.6;
+      diffuseColor.rgb = mix(body, wcol, win * 0.94);
+      // night: offices light by floor sections with ceiling bands; homes in mixed colour temperatures, some with blinds down
+      float office = (gType < 0.5 || gType > 1.5) ? 1.0 : 0.0;
+      vec2 id = gId;
+      float hsh = office > 0.5 ? h21(vec2(floor(id.x / (3.0 + floor(hE * 4.0))), id.y + bh * 97.0)) * 0.85 + gHsh * 0.15 : gHsh;
       float bLit = bh < 0.08 ? 0.04 : uLit * (0.35 + 1.15 * fract(bh * 5.3));
-      float lit = max(step(1.0 - bLit, hsh) * (0.55 + 0.45 * fract(hsh * 13.1)), gStore * 0.9);
-      float coolP = gType < 0.5 ? 0.35 : 0.78;   // offices run cool-white, homes warm
-      vec3 wc = mix(vec3(1.0, 0.74, 0.42), gType < 0.5 ? vec3(0.86, 0.92, 1.0) : vec3(0.78, 0.86, 1.0), step(coolP, fract(hsh * 7.31)));
+      float lit = step(1.0 - bLit, hsh) * (0.5 + 0.5 * fract(hsh * 13.1));
+      float k = fract(hsh * 7.31);
+      vec3 wc = office > 0.5 ? mix(vec3(1.0, 0.92, 0.8), vec3(0.84, 0.91, 1.0), step(0.45, k))
+        : k < 0.5 ? vec3(1.0, 0.62, 0.32) : k < 0.78 ? vec3(1.0, 0.76, 0.48) : k < 0.92 ? vec3(0.95, 0.85, 0.7) : k < 0.97 ? vec3(0.75, 0.83, 0.95) : vec3(0.4, 0.5, 1.0) * 0.6;
+      float wyc = clamp(gWinY, 0.0, 1.0);
+      if (office > 0.5) lit *= 0.7 + 0.6 * smoothstep(0.55, 0.95, wyc);
+      else { float blind = fract(hsh * 3.3); if (blind < 0.4) lit *= mix(1.0, 0.18, step(0.35 + blind * 1.4, wyc)); lit *= 0.72 + 0.35 * wyc; if (gCurt > 0.5) wc *= vec3(1.0, 0.85, 0.65); }
+      lit = max(lit, gStore * 0.9);
       lit = mix(lit, max(min(bLit, 1.0) * 0.775, gStore * 0.9), gLod);
-      wc = mix(wc, gType < 0.5 ? vec3(0.9, 0.88, 0.85) : vec3(0.95, 0.77, 0.52), gLod);
+      wc = mix(wc, office > 0.5 ? vec3(0.92, 0.9, 0.86) : vec3(1.0, 0.76, 0.5), gLod);
       totalEmissiveRadiance += wc * win * lit * uLights * (gStore > 0.5 ? 1.6 : 1.15);
       float crown = step(80.0, vH) * step(0.45, fract(vBld.z * 3.3)) * smoothstep(vH - 10.0, vH - 8.0, vLP.y) * step(vLP.y, vH - 0.3);
       vec3 cc = mix(vec3(1.0, 0.92, 0.78), vec3(0.75, 0.88, 1.0), step(0.7, fract(vBld.z * 7.7)));
@@ -1380,6 +1438,7 @@ function makeBldMesh(geo, list, mat) {
 }
 const BOX_GEO = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
 const OCT_GEO = new THREE.CylinderGeometry(0.5, 0.5, 1, 8).translate(0, 0.5, 0).rotateY(Math.PI / 8);
+const CYL_GEO = new THREE.CylinderGeometry(0.5, 0.5, 1, 32, 1).translate(0, 0.5, 0);   // round towers: facade type + 10
 const ROOF_GEO = (() => { const sh = new THREE.Shape([new THREE.Vector2(-0.5, 0), new THREE.Vector2(0.5, 0), new THREE.Vector2(0, 1)]); const g = new THREE.ExtrudeGeometry(sh, { depth: 1, bevelEnabled: false }); g.translate(0, 0, -0.5); return g; })();
 const PYR_GEO = new THREE.ConeGeometry(0.7071, 1, 4, 1).translate(0, 0.5, 0);
 const TANK_GEO = mergeGeometries([new THREE.CylinderGeometry(0.5, 0.5, 0.7, 12).translate(0, 0.55, 0), new THREE.ConeGeometry(0.55, 0.3, 12).translate(0, 1.05, 0), new THREE.BoxGeometry(0.08, 0.25, 0.08).translate(0.3, 0.1, 0.3), new THREE.BoxGeometry(0.08, 0.25, 0.08).translate(-0.3, 0.1, -0.3), new THREE.BoxGeometry(0.08, 0.25, 0.08).translate(0.3, 0.1, -0.3), new THREE.BoxGeometry(0.08, 0.25, 0.08).translate(-0.3, 0.1, 0.3)]);
@@ -1402,7 +1461,7 @@ function buildCity(o) {
   const asp = new THREE.Mesh(new THREE.PlaneGeometry(Wx, Wz).rotateX(-Math.PI / 2), M.asphalt);
   asp.position.set(o.cx, y + 0.02, o.cz); asp.receiveShadow = true; g.add(asp);
 
-  const bases = [], B = [], OCT = [], T = [], ROOFS = [], TANKS = [], PYR = [], trees = [], lamps = [], lanes = [], dashes = [];
+  const bases = [], B = [], OCT = [], CYL = [], T = [], ROOFS = [], TANKS = [], PYR = [], trees = [], lamps = [], lanes = [], dashes = [];
   const sw = srgb('#bcb7ad'), pk = srgb('#6f9550'), lotC = srgb('#55575b'), plazaC = srgb('#c9c2b4');
   const tall = o.maxH > 60;
   for (let j = 0; j < o.nx; j++) for (let i = 0; i < o.nz; i++) {
@@ -1490,7 +1549,7 @@ function buildCity(o) {
         box(cx, cz, roofW, roofD, h - ph, top, { main: true, type: R() < 0.7 ? 0 : type }); top += h - ph;
         if (h > 90 && R() < 0.35) { const ph2 = 10 + R() * 18; PYR.push({ x: cx, z: cz, w: roofW * 1.38, d: roofD * 1.38, h: ph2, y: top, c: srgb('#8c9399'), rot: Math.PI / 4 }); top += ph2; }
       } else if (dist === 'down' && shape < 0.74 && h > 45) {
-        const r = Math.min(w, d); OCT.push({ ...base, type: 0, x: cx, z: cz, w: r, d: r, h, y: top }); B.push({ ...base, x: cx, z: cz, w: r * 0.9, d: r * 0.9, h: 0, y: top, main: true, hidden: true, hh: h });
+        const r = Math.min(w, d), rnd = fract1(seed * 7.31) < 0.5; (rnd ? CYL : OCT).push({ ...base, type: (rnd ? 10 : 0) + (fract1(seed * 3.7) < 0.7 ? 0 : 2), x: cx, z: cz, w: r, d: r, h, y: top });   // decided from the seed so layouts stay put B.push({ ...base, x: cx, z: cz, w: r * 0.9, d: r * 0.9, h: 0, y: top, main: true, hidden: true, hh: h });
         top += h; roofW = roofD = r * 0.7;
       } else if (dist !== 'low' && shape < 0.3 && Math.min(w, d) > 12) {
         // L-shape: two wings
@@ -1535,6 +1594,7 @@ function buildCity(o) {
   const vis = B.filter(b => !b.hidden);
   if (vis.length) g.add(makeBldMesh(BOX_GEO, vis, M.bld));
   if (OCT.length) g.add(makeBldMesh(OCT_GEO, OCT, M.bld));
+  if (CYL.length) g.add(makeBldMesh(CYL_GEO, CYL, M.bld));
   if (T.length) g.add(makeBldMesh(BOX_GEO, T, M.trim));
   if (ROOFS.length) g.add(makeBldMesh(ROOF_GEO, ROOFS, M.trim));
   if (TANKS.length) g.add(makeBldMesh(TANK_GEO, TANKS, M.trim));
@@ -2745,7 +2805,7 @@ SCENES.intersection = {
     }
     g.add(makeLamps(lamps, 0.22)); g.add(makeTrees(trees));
     // towers lining the avenues
-    const Bl = [], T = [], screens = [];
+    const Bl = [], T = [], screens = [], RND = [];
     function frontage(axis, sgn, a0, a1, front, cap) {
       let p = a0;
       while (p < a1) {
@@ -2764,7 +2824,8 @@ SCENES.intersection = {
           T.push({ x: cx, z: cz, w: w + 0.6, d: dep + 0.6, h: 0.8, y: ph, c: srgb('#8a8f94') });
           const k = 0.6 + R() * 0.22, bx = axis === 'z' ? sgn * w * (1 - k) * 0.35 : 0, bz = axis === 'z' ? 0 : sgn * dep * (1 - k) * 0.35;
           Bl.push({ ...base, x: cx + bx, z: cz + bz, w: w * k, d: dep * k, h: h - ph, y: 0.2 + ph });
-        } else Bl.push({ ...base, x: cx, z: cz, w, d: dep, h, y: 0.2 });
+        } else if (h > 70 && R() < 0.14) { const r = Math.min(w, dep) * 0.95; RND.push({ ...base, type: 10 + (type === 1 ? 0 : type), x: cx, z: cz, w: r, d: r, h, y: 0.2 }); Bl.push({ ...base, x: cx, z: cz, w: r * 0.7, d: r * 0.7, h: 4.4, y: 0.2 }); T.push({ x: cx, z: cz, w: r * 0.6, d: r * 0.6, h: 3 + R() * 5, y: h + 0.2, c: srgb('#7d8389') }); continue; }
+        else Bl.push({ ...base, x: cx, z: cz, w, d: dep, h, y: 0.2 });
         const top = Bl[Bl.length - 1];
         T.push({ x: top.x, z: top.z, w: top.w + 0.6, d: top.d + 0.6, h: 0.9, y: top.y + top.h - 0.2, c: srgb('#8a8f94') });
         if (top.y + top.h > 60 && R() < 0.5) T.push({ x: top.x, z: top.z, w: top.w * 0.4, d: top.d * 0.4, h: 4 + R() * 6, y: top.y + top.h, c: srgb('#7d8389') });
@@ -2782,7 +2843,7 @@ SCENES.intersection = {
     const capNearCam = () => 15 + R() * 13;
     for (const sx of [-1, 1]) { frontage('z', sx, -A1, -(hwB + SW + 2), hwA + SW, () => 999); frontage('z', sx, hwB + SW + 2, A0 - 20, hwA + SW, capNearCam); }
     for (const sz of [-1, 1]) { frontage('x', sz, -BX, -(hwA + SW + 64), hwB + SW, () => 999); frontage('x', sz, hwA + SW + 64, BX, hwB + SW, () => 999); }
-    g.add(makeBldMesh(BOX_GEO, Bl, M.bld)); g.add(makeBldMesh(BOX_GEO, T, M.trim));
+    g.add(makeBldMesh(BOX_GEO, Bl, M.bld)); g.add(makeBldMesh(BOX_GEO, T, M.trim)); if (RND.length) g.add(makeBldMesh(CYL_GEO, RND, M.bld));
     g.add(makeNeon(Bl, 17, 1, { low: 24, vert: 0.55, boardRate: 0.75, count: (b, r) => b.y < 1 ? (b.h < 30 ? 4 + Math.floor(r() * 4) : 2 + Math.floor(r() * 4)) : Math.floor(r() * 2) }));
     if (screens.length) {
       const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), M.board, screens.length);
@@ -2973,7 +3034,7 @@ function loadScene(name, keepCam = false) {
 
 function applyQuality() {
   const q = S.quality;
-  renderer.setPixelRatio(q === 'high' ? Math.min(Math.max(devicePixelRatio, 1.5), 2.5) : Math.min(devicePixelRatio, q === 'med' ? 2 : 1.5));
+  renderer.setPixelRatio(q === 'high' ? Math.min(Math.max(devicePixelRatio, 1.5), 2.5) : Math.min(devicePixelRatio, 2));
   const shadows = q !== 'low';
   if (renderer.shadowMap.enabled !== shadows) { renderer.shadowMap.enabled = shadows; scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => m.needsUpdate = true); }); }
   sun.castShadow = shadows;
@@ -3134,7 +3195,7 @@ function applyStyleUniforms() {
   if (gtao) gtao.enabled = film && S.quality !== 'low';
   const tm = film ? THREE.AgXToneMapping : THREE.ACESFilmicToneMapping;
   if (renderer.toneMapping !== tm) renderer.toneMapping = tm;
-  winU.uGlass.value = film ? 1 : 0.6;
+  winU.uGlass.value = film ? 1 : 0.9;
   if (film) renderer.toneMappingExposure *= 1.45; u.uRadius.value = S.brush; u.uGrain.value = S.grain;
   waterU.uFacet.value = S.style === 'lowpoly' ? 1 : 0;
 }
