@@ -884,7 +884,7 @@ const M = {
   pool: new THREE.MeshBasicMaterial({ map: poolTex, color: 0xffb35a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
   trunk: new THREE.MeshStandardMaterial({ color: 0x6b4f3a, roughness: 1, flatShading: true }),
   leaf: new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true }),
-  car: new THREE.MeshStandardMaterial({ roughness: 0.4, metalness: 0.25 }),
+  car: new THREE.MeshStandardMaterial({ roughness: 0.32, metalness: 0.45, vertexColors: true }),
   head: new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
   tail: new THREE.MeshBasicMaterial({ color: 0xff2010, toneMapped: false }),
   beam: new THREE.MeshBasicMaterial({ map: beamTex, color: 0xffe9c4, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
@@ -1000,8 +1000,15 @@ const winU = { uLights: { value: 0 }, uLit: { value: 0.55 }, uGlass: { value: 0.
 M.bld.onBeforeCompile = (sh) => {
   sh.uniforms.uLights = winU.uLights; sh.uniforms.uLit = winU.uLit; sh.uniforms.uGlass = winU.uGlass;
   sh.uniforms.tGD = TEX.gravD; sh.uniforms.uTexOn = TEX.on; sh.uniforms.tFac = TEX.fac; sh.uniforms.tFacN = TEX.facN; sh.uniforms.uFacOn = TEX.facOn;
-  sh.vertexShader = 'attribute vec3 aBld;\nvarying vec3 vBld;\nvarying vec3 vWPos;\nvarying vec3 vWN;\n' + sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
-    vBld = aBld;
+  sh.vertexShader = 'attribute vec3 aBld;\nvarying vec3 vBld;\nvarying vec3 vWPos;\nvarying vec3 vWN;\nvarying vec3 vLP;\nvarying vec3 vLN;\nvarying vec3 vWT;\n' + sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+    vBld = aBld; vLN = objectNormal;
+    #ifdef USE_INSTANCING
+      vec3 isc = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
+      vLP = transformed * isc;
+      vWT = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * vec3(-objectNormal.z, 0.0, objectNormal.x) + 1e-5);
+    #else
+      vLP = transformed; vWT = vec3(1.0, 0.0, 0.0);
+    #endif
     #ifdef USE_INSTANCING
       vec4 wq = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
       vWN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * objectNormal);
@@ -1010,17 +1017,16 @@ M.bld.onBeforeCompile = (sh) => {
       vWN = normalize(mat3(modelMatrix) * objectNormal);
     #endif
     vWPos = wq.xyz;`);
-  sh.fragmentShader = 'uniform float uLights;\nuniform float uLit;\nuniform float uGlass;\nuniform float uTexOn;\nuniform float uFacOn;\nuniform sampler2D tGD;\nuniform sampler2DArray tFac;\nuniform sampler2DArray tFacN;\nvarying vec3 vBld;\nvarying vec3 vWPos;\nvarying vec3 vWN;\nfloat gWin = 0.0; float gBh = 0.0; float gType = 1.0; float gL = 0.0; float gFrame = 0.0; float gStreak = 0.5; float gStore = 0.0; vec2 gId = vec2(0.0); vec2 gFUV = vec2(0.0); vec3 gT = vec3(1.0, 0.0, 0.0);\n' + TEXGLSL + `
+  sh.fragmentShader = 'uniform float uLights;\nuniform float uLit;\nuniform float uGlass;\nuniform float uTexOn;\nuniform float uFacOn;\nuniform sampler2D tGD;\nuniform sampler2DArray tFac;\nuniform sampler2DArray tFacN;\nvarying vec3 vBld;\nvarying vec3 vWPos;\nvarying vec3 vWN;\nvarying vec3 vLP;\nvarying vec3 vLN;\nvarying vec3 vWT;\nfloat gWin = 0.0; float gBh = 0.0; float gType = 1.0; float gL = 0.0; float gFrame = 0.0; float gStreak = 0.5; float gStore = 0.0; vec2 gId = vec2(0.0); vec2 gFUV = vec2(0.0); vec3 gT = vec3(1.0, 0.0, 0.0);\n' + TEXGLSL + `
   float facScale(float L){ return L < 0.5 ? 1.0 : L < 1.5 ? 2.09 : L < 2.5 ? 2.0 : L < 3.5 ? 3.0 : L < 4.5 ? 3.0 : L < 5.5 ? 2.16 : L < 6.5 ? 8.0 : 1.96; }
   vec3 facAvg(float L){ return L < 0.5 ? vec3(0.145, 0.085, 0.068) : L < 1.5 ? vec3(0.033, 0.036, 0.041) : L < 2.5 ? vec3(0.459, 0.374, 0.28) : L < 3.5 ? vec3(0.349, 0.267, 0.19)
     : L < 4.5 ? vec3(0.119, 0.184, 0.068) : L < 5.5 ? vec3(0.259, 0.227, 0.157) : L < 6.5 ? vec3(0.316, 0.231, 0.157) : vec3(0.426, 0.394, 0.334); }
   ` + sh.fragmentShader.replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
     gType = vBld.x; gL = vBld.y; gBh = vBld.z;
     if (abs(vWN.y) < 0.5) {
-      float ux = abs(vWN.x) > abs(vWN.z) ? vWPos.z : vWPos.x;
-      if (abs(abs(vWN.x) - abs(vWN.z)) < 0.4) ux = (vWPos.x + vWPos.z) * 0.7071;
-      gT = abs(vWN.x) > abs(vWN.z) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-      float u0 = ux;
+      vec2 ln = normalize(vLN.xz + 1e-5);
+      float u0 = dot(vLP.xz, vec2(-ln.y, ln.x)) + vBld.z * 37.0;
+      gT = vWT;
       float floorH = 3.4 + fract(gBh * 3.7) * 0.6;
       float fy = (vWPos.y - 0.3) / floorH;
       float colW = gType < 0.5 ? 1.5 + fract(gBh * 9.1) * 0.7 : 2.4 + fract(gBh * 5.7) * 1.6;
@@ -1090,6 +1096,11 @@ function makeTerrain(size, seg, hf, colorFn) {
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) p.setY(i, hf(p.getX(i), p.getZ(i)));
   if (S.style !== 'lowpoly') {
+    const n = seg + 1, src = Float32Array.from({ length: p.count }, (_, i) => p.getY(i));
+    for (let r = 1; r < n - 1; r++) for (let c = 1; c < n - 1; c++) {
+      const i = r * n + c, avg = (src[i - 1] + src[i + 1] + src[i - n] + src[i + n]) * 0.25;
+      p.setY(i, src[i] * 0.45 + avg * 0.55);
+    }
     g.computeVertexNormals();
     const nr = g.attributes.normal, cols = new Float32Array(p.count * 3), col = new THREE.Color();
     for (let i = 0; i < p.count; i++) {
@@ -1262,6 +1273,7 @@ function makeBldMesh(geo, list, mat) {
 const BOX_GEO = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
 const OCT_GEO = new THREE.CylinderGeometry(0.5, 0.5, 1, 8).translate(0, 0.5, 0).rotateY(Math.PI / 8);
 const ROOF_GEO = (() => { const sh = new THREE.Shape([new THREE.Vector2(-0.5, 0), new THREE.Vector2(0.5, 0), new THREE.Vector2(0, 1)]); const g = new THREE.ExtrudeGeometry(sh, { depth: 1, bevelEnabled: false }); g.translate(0, 0, -0.5); return g; })();
+const PYR_GEO = new THREE.ConeGeometry(0.7071, 1, 4, 1).translate(0, 0.5, 0);
 const TANK_GEO = mergeGeometries([new THREE.CylinderGeometry(0.5, 0.5, 0.7, 12).translate(0, 0.55, 0), new THREE.ConeGeometry(0.55, 0.3, 12).translate(0, 1.05, 0), new THREE.BoxGeometry(0.08, 0.25, 0.08).translate(0.3, 0.1, 0.3), new THREE.BoxGeometry(0.08, 0.25, 0.08).translate(-0.3, 0.1, -0.3), new THREE.BoxGeometry(0.08, 0.25, 0.08).translate(0.3, 0.1, -0.3), new THREE.BoxGeometry(0.08, 0.25, 0.08).translate(-0.3, 0.1, 0.3)]);
 
 function buildCity(o) {
@@ -1282,7 +1294,7 @@ function buildCity(o) {
   const asp = new THREE.Mesh(new THREE.PlaneGeometry(Wx, Wz).rotateX(-Math.PI / 2), M.asphalt);
   asp.position.set(o.cx, y + 0.02, o.cz); asp.receiveShadow = true; g.add(asp);
 
-  const bases = [], B = [], OCT = [], T = [], ROOFS = [], TANKS = [], trees = [], lamps = [], lanes = [], dashes = [];
+  const bases = [], B = [], OCT = [], T = [], ROOFS = [], TANKS = [], PYR = [], trees = [], lamps = [], lanes = [], dashes = [];
   const sw = srgb('#bcb7ad'), pk = srgb('#6f9550'), lotC = srgb('#55575b'), plazaC = srgb('#c9c2b4');
   const tall = o.maxH > 60;
   for (let j = 0; j < o.nx; j++) for (let i = 0; i < o.nz; i++) {
@@ -1330,12 +1342,46 @@ function buildCity(o) {
       const trimC = c.clone().offsetHSL(0, -0.05, R() < 0.5 ? -0.12 : 0.06);
       let top = y + 0.3, roofW = w, roofD = d, cx = L.x, cz = L.z;
       const shape = R();
-      if (dist === 'down' && shape < 0.38 && h > 45) {
+      if (R() < (dist === 'low' ? 0.03 : 0.045) && L.w > 18 && L.d > 18) {
+        // construction site: bare concrete core with a tower crane
+        const ch = h * (0.35 + R() * 0.4), cc = srgb('#9a968e');
+        T.push({ x: cx, z: cz, w: w * 0.9, d: d * 0.9, h: ch, y: top, c: cc });
+        for (let fl = 4; fl < ch; fl += 4) T.push({ x: cx, z: cz, w: w * 0.92, d: d * 0.92, h: 0.35, y: top + fl, c: srgb('#b5b0a6') });
+        const mh = ch + 22 + R() * 25, mx = cx + w * 0.3, mz = cz - d * 0.3, ang = R() * Math.PI * 2, jl = 40 + R() * 20, yel = srgb('#e0b31c');
+        T.push({ x: mx, z: mz, w: 2, d: 2, h: mh, y: top, c: yel });
+        T.push({ x: mx + Math.cos(ang) * jl * 0.35, z: mz - Math.sin(ang) * jl * 0.35, w: jl, d: 1.4, h: 1.6, y: top + mh, c: yel, rot: ang });
+        T.push({ x: mx - Math.cos(ang) * 9, z: mz + Math.sin(ang) * 9, w: 5, d: 3, h: 3, y: top + mh - 1.5, c: srgb('#55585c'), rot: ang });
+        T.push({ x: mx, z: mz, w: 3, d: 3, h: 3, y: top + mh - 3.2, c: srgb('#d8d4cc') });
+        continue;
+      }
+      if (dist !== 'low' && shape < 0.12 && h > 30) {
+        // rotated tower: square footprint turned on its lot
+        const r = Math.min(w, d) * 0.72, rot = R() < 0.5 ? Math.PI / 4 : R() * Math.PI;
+        box(cx, cz, r, r, h, top, { main: true, rot }); top += h; roofW = roofD = r * 0.7;
+        T.push({ x: cx, z: cz, w: r + 0.6, d: r + 0.6, h: 0.8, y: top - 0.2, c: trimC, rot });
+        if (R() < 0.5) { const ph = 8 + R() * 14; PYR.push({ x: cx, z: cz, w: r * 0.98, d: r * 0.98, h: ph, y: top, c: srgb('#7d868f'), rot: rot + Math.PI / 4 }); top += ph; }
+      } else if (dist === 'down' && shape < 0.24 && h > 60) {
+        // art-deco stepped tower with a spire
+        let ww = w, dd = d; const steps = 3 + Math.floor(R() * 2); let rem = h;
+        for (let k = 0; k < steps; k++) {
+          const hh = k === steps - 1 ? rem : rem * (0.45 + R() * 0.15); box(cx, cz, ww, dd, hh, top, { main: k === 0 });
+          top += hh; rem -= hh; T.push({ x: cx, z: cz, w: ww + 0.8, d: dd + 0.8, h: 1.1, y: top - 0.3, c: trimC });
+          ww *= 0.78; dd *= 0.78;
+        }
+        roofW = ww; roofD = dd;
+        T.push({ x: cx, z: cz, w: 1.2, d: 1.2, h: 20 + R() * 25, y: top, c: srgb('#b9bcbf') });
+      } else if (dist === 'down' && shape < 0.34 && h > 45) {
+        // slab tower: thin and wide
+        const along = w > d, sw2 = along ? w : Math.min(w, 14 + R() * 4), sd2 = along ? Math.min(d, 14 + R() * 4) : d;
+        box(cx, cz, sw2, sd2, h, top, { main: true, type: R() < 0.5 ? 2 : type }); top += h; roofW = sw2; roofD = sd2;
+        T.push({ x: cx, z: cz, w: sw2 + 0.6, d: sd2 + 0.6, h: 0.8, y: top - 0.2, c: trimC });
+      } else if (dist === 'down' && shape < 0.6 && h > 45) {
         // podium with a tower on top
         const ph = 9 + R() * 12; box(cx, cz, w, d, ph, top, { main: true }); T.push({ x: cx, z: cz, w: w + 0.6, d: d + 0.6, h: 0.8, y: top + ph - 0.2, c: trimC });
         top += ph; const k = 0.5 + R() * 0.25; roofW = w * k; roofD = d * k; cx += (R() - 0.5) * (w - roofW) * 0.6; cz += (R() - 0.5) * (d - roofD) * 0.6;
         box(cx, cz, roofW, roofD, h - ph, top, { main: true, type: R() < 0.7 ? 0 : type }); top += h - ph;
-      } else if (dist === 'down' && shape < 0.55 && h > 45) {
+        if (h > 90 && R() < 0.35) { const ph2 = 10 + R() * 18; PYR.push({ x: cx, z: cz, w: roofW * 1.38, d: roofD * 1.38, h: ph2, y: top, c: srgb('#8c9399'), rot: Math.PI / 4 }); top += ph2; }
+      } else if (dist === 'down' && shape < 0.74 && h > 45) {
         const r = Math.min(w, d); OCT.push({ ...base, type: 0, x: cx, z: cz, w: r, d: r, h, y: top }); B.push({ ...base, x: cx, z: cz, w: r * 0.9, d: r * 0.9, h: 0, y: top, main: true, hidden: true, hh: h });
         top += h; roofW = roofD = r * 0.7;
       } else if (dist !== 'low' && shape < 0.3 && Math.min(w, d) > 12) {
@@ -1344,6 +1390,14 @@ function buildCity(o) {
         box(cx - (w - ww) / 2, cz, ww, d, h, top, { main: true }); box(cx + ww / 2, cz - (d - dd) / 2, w - ww, dd, h2, top, { main: true });
         T.push({ x: cx - (w - ww) / 2, z: cz, w: ww + 0.6, d: d + 0.6, h: 0.8, y: top + h - 0.2, c: trimC });
         roofW = ww; roofD = d; cx = cx - (w - ww) / 2; top += h;
+      } else if (dist === 'mid' && shape < 0.42 && Math.min(w, d) > 20) {
+        // courtyard block: four wings around an open middle
+        const t2 = Math.min(w, d) * 0.28;
+        box(cx, cz - (d - t2) / 2, w, t2, h, top, { main: true }); box(cx, cz + (d - t2) / 2, w, t2, h, top, { main: true });
+        box(cx - (w - t2) / 2, cz, t2, d - 2 * t2, h, top); box(cx + (w - t2) / 2, cz, t2, d - 2 * t2, h, top);
+        T.push({ x: cx, z: cz - (d - t2) / 2, w: w + 0.6, d: t2 + 0.6, h: 0.8, y: top + h - 0.2, c: trimC });
+        T.push({ x: cx, z: cz + (d - t2) / 2, w: w + 0.6, d: t2 + 0.6, h: 0.8, y: top + h - 0.2, c: trimC });
+        roofW = w; roofD = t2; cz = cz - (d - t2) / 2; top += h;
       } else {
         box(cx, cz, w, d, h, top, { main: true }); top += h;
         T.push({ x: cx, z: cz, w: w + 0.6, d: d + 0.6, h: 0.8, y: top - 0.2, c: trimC });
@@ -1376,6 +1430,7 @@ function buildCity(o) {
   if (T.length) g.add(makeBldMesh(BOX_GEO, T, M.trim));
   if (ROOFS.length) g.add(makeBldMesh(ROOF_GEO, ROOFS, M.trim));
   if (TANKS.length) g.add(makeBldMesh(TANK_GEO, TANKS, M.trim));
+  if (PYR.length) g.add(makeBldMesh(PYR_GEO, PYR, M.trim));
   B.forEach(b => { if (b.hidden) b.h = b.hh; });
   // roads: lanes, dashes, lamps
   const crossing = (pos, roads, off) => roads.some(r => Math.abs(pos - (off + r.c)) < r.w / 2 + 1.5);
@@ -1410,17 +1465,23 @@ function buildCity(o) {
   g.add(makeTrees(trees));
   return { group: g, lanes, buildings: B, rect: { x0, x1: x0 + Wx, z0, z1: z0 + Wz } };
 }
+const CAR_GEO = (() => {
+  const paint = (geo, v) => { const n = geo.attributes.position.count, c = new Float32Array(n * 3).fill(v); geo.setAttribute('color', new THREE.BufferAttribute(c, 3)); return geo.toNonIndexed ? (geo.index ? geo.toNonIndexed() : geo) : geo; };
+  const prof = new THREE.Shape([[2.15, 0.36], [2.22, 0.62], [1.45, 0.84], [0.65, 0.9], [-1.55, 0.94], [-2.12, 0.88], [-2.2, 0.42], [-2.1, 0.32]].map(([x, y]) => new THREE.Vector2(x, y)));
+  const body = new THREE.ExtrudeGeometry(prof, { depth: 1.84, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.05, bevelSegments: 1 }).translate(0, 0, -0.92).rotateY(-Math.PI / 2);
+  const gh = new THREE.Shape([[0.78, 0.88], [0.18, 1.4], [-1.02, 1.42], [-1.72, 0.94]].map(([x, y]) => new THREE.Vector2(x, y)));
+  const glass = new THREE.ExtrudeGeometry(gh, { depth: 1.6, bevelEnabled: false }).translate(0, 0, -0.8).rotateY(-Math.PI / 2);
+  const wheels = [];
+  for (const [wx, wz] of [[-0.86, 1.35], [0.86, 1.35], [-0.86, -1.32], [0.86, -1.32]]) wheels.push(paint(new THREE.CylinderGeometry(0.34, 0.34, 0.26, 12).rotateZ(Math.PI / 2).translate(wx, 0.34, wz), 0.04));
+  return mergeGeometries([paint(body, 1), paint(glass, 0.07), ...wheels].map(gm => gm.index ? gm.toNonIndexed() : gm));
+})();
 const CAR_COLORS = ['#c94040', '#eeeeea', '#2a2e35', '#3c6bd0', '#e2ad38', '#8b9198', '#2e8a67', '#c5cad0', '#e9e6df', '#1f2328'].map(srgb);
 function makeTraffic(lanes) {
   const g = new THREE.Group();
   const per = l => Math.floor(l.L / 20);
   let cap = 0; lanes.forEach(l => { cap += per(l); l.yaw = Math.atan2(l.h.x, l.h.z); });
   cap = Math.max(cap, 1);
-  const carGeo = mergeGeometries([
-    new THREE.BoxGeometry(2.0, 0.85, 4.3).translate(0, 0.68, 0),
-    new THREE.BoxGeometry(1.74, 0.68, 2.2).translate(0, 1.42, -0.25),
-    new THREE.BoxGeometry(1.9, 0.3, 3.6).translate(0, 0.2, 0),
-  ]);
+  const carGeo = CAR_GEO;
   const cars = new THREE.InstancedMesh(carGeo, M.car, cap);
   const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.46, 0.2, 0.08), M.head, cap * 2);
   const tails = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.18, 0.08), M.tail, cap * 2);
@@ -1697,6 +1758,101 @@ const SCENES = {
   },
 };
 
+/* LED and neon sign atlas, painted at startup: 16 vertical signs, 16 horizontal signs, 16 screen ads */
+const SIGN_ATLAS = (() => {
+  const cv = document.createElement('canvas'); cv.width = 2048; cv.height = 2048;
+  const g = cv.getContext('2d'), R = rng(77);
+  const hues = [320, 190, 40, 95, 350, 265, 0, 25, 170, 55];
+  const col = (h, l = 60) => `hsl(${h}, 100%, ${l}%)`;
+  const JP = ['ラーメン', 'カラオケ', '居酒屋', 'ホテル', '営業中', '焼肉', '寿司', 'ゲーム', 'バー', '喫茶', '電気街', '二十四時', 'クラブ', '映画館', '薬局', '酒場'];
+  const EN = ['HOTEL', 'BAR', 'OPEN 24H', 'KARAOKE', 'RAMEN', 'SUSHI', 'ARCADE', 'NOODLES', 'LIVE', 'CAFE', 'カラオケ', '居酒屋', 'GAMES', 'CINEMA', 'DINER', 'CLUB'];
+  const AD = ['NEW', 'SALE', 'NEO', 'ZERO', 'FLOW', 'NOVA', 'PULSE', 'AURA', 'VOLT', 'LUMA', 'ECHO', 'APEX', 'SOLA', 'KAI', 'MIRA', 'ORBIT'];
+  const JPF = '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", "Noto Sans CJK JP", Meiryo, "MS Gothic", sans-serif';
+  const glow = (c, b) => { g.shadowColor = c; g.shadowBlur = b; };
+  // vertical signs
+  for (let i = 0; i < 16; i++) {
+    const x = i * 128, y = 0, h1 = hues[i % hues.length], h2 = hues[(i * 3 + 2) % hues.length];
+    g.fillStyle = `hsl(${h1}, 50%, ${R() < 0.4 ? 12 : 4}%)`; g.fillRect(x + 4, y + 4, 120, 504);
+    glow(col(h1), 14); g.strokeStyle = col(h1, 65); g.lineWidth = 6; g.strokeRect(x + 10, y + 10, 108, 492);
+    const word = i < 12 ? JP[i] : EN[i - 12].replace(' ', ''); const chars = [...word];
+    const cell = Math.min(110, 470 / chars.length);
+    g.font = `900 ${Math.floor(cell * 0.86)}px ${JPF}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    glow(col(h2, 55), 18); g.fillStyle = col(h2, 75);
+    chars.forEach((ch, k) => g.fillText(ch, x + 64, y + 22 + cell * (k + 0.5) + (470 - cell * chars.length) / 2));
+  }
+  // horizontal signs
+  for (let i = 0; i < 16; i++) {
+    const x = (i % 4) * 512, y = 512 + Math.floor(i / 4) * 128, h1 = hues[(i + 4) % hues.length], h2 = hues[(i * 7 + 1) % hues.length];
+    g.shadowBlur = 0; g.fillStyle = `hsl(${h1}, 45%, 5%)`; g.fillRect(x + 4, y + 4, 504, 120);
+    glow(col(h1), 12); g.strokeStyle = col(h1, 62); g.lineWidth = 5;
+    g.beginPath(); g.roundRect ? g.roundRect(x + 12, y + 12, 488, 104, 20) : g.rect(x + 12, y + 12, 488, 104); g.stroke();
+    const word = EN[i];
+    g.font = `${R() < 0.5 ? 'italic ' : ''}900 72px ${/[^\x00-\x7F]/.test(word) ? JPF : '"Arial Black", "Helvetica Neue", Arial, sans-serif'}`;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    const tw = g.measureText(word).width, sc = Math.min(1, 440 / tw);
+    g.save(); g.translate(x + 256, y + 66); g.scale(sc, 1);
+    glow(col(h2, 55), 16); g.fillStyle = col(h2, 78); g.fillText(word, 0, 0); g.restore();
+  }
+  // screen ads (animated in the shader)
+  for (let i = 0; i < 16; i++) {
+    const x = (i % 4) * 512, y = 1024 + Math.floor(i / 4) * 256, h1 = hues[i % hues.length], h2 = hues[(i * 5 + 3) % hues.length];
+    g.shadowBlur = 0;
+    const gr = g.createLinearGradient(x, y, x + 512, y + 256); gr.addColorStop(0, `hsl(${h1}, 80%, 22%)`); gr.addColorStop(1, `hsl(${h2}, 85%, 38%)`);
+    g.fillStyle = gr; g.fillRect(x, y, 512, 256);
+    for (let k = 0; k < 4; k++) { g.fillStyle = `hsla(${hues[(i + k) % hues.length]}, 90%, ${50 + R() * 20}%, ${0.25 + R() * 0.35})`; g.beginPath(); g.arc(x + R() * 512, y + R() * 256, 30 + R() * 110, 0, Math.PI * 2); g.fill(); }
+    if (i % 3 === 0) { g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 4; g.beginPath(); for (let k = 0; k <= 40; k++) { const px = x + k * 12.8, py = y + 180 + Math.sin(k * 0.6 + i) * 30; k ? g.lineTo(px, py) : g.moveTo(px, py); } g.stroke(); }
+    g.font = `900 ${80 + Math.floor(R() * 40)}px "Arial Black", "Helvetica Neue", Arial, sans-serif`; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    glow('rgba(0,0,0,0.6)', 10); g.fillStyle = '#ffffff'; g.fillText(AD[i], x + 28, y + 140);
+    g.shadowBlur = 0; g.font = `700 26px ${JPF}`; g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillText(JP[(i * 5) % 16] + '  ' + (10 + (i * 7) % 89) + '%', x + 30, y + 200);
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; t.generateMipmaps = true; return t;
+})();
+const signU = { uTime: boardU.uTime, uGain: { value: 1 }, tAtlas: { value: SIGN_ATLAS } };
+M.sign = new THREE.ShaderMaterial({
+  uniforms: signU, side: THREE.DoubleSide, toneMapped: false,
+  vertexShader: `attribute vec4 aTile; attribute vec4 aFx; varying vec2 vUv; varying vec4 vTile; varying vec4 vFx;
+    void main(){ vUv = uv; vTile = aTile; vFx = aFx; gl_Position = projectionMatrix * viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.); }`,
+  fragmentShader: `uniform sampler2D tAtlas; uniform float uTime, uGain; varying vec2 vUv; varying vec4 vTile; varying vec4 vFx;
+    float h1(float n){ return fract(sin(n * 12.9898) * 43758.5453); }
+    void main(){
+      vec2 uv = vUv;
+      if (vFx.y > 0.5) uv.x = fract(uv.x + uTime * 0.07 * (0.5 + vFx.w));
+      vec3 c = texture2D(tAtlas, vTile.xy + uv * vTile.zw).rgb;
+      float fl = 1.0;
+      if (vFx.x > 0.5) { float n = h1(floor(uTime * 14.0) + vFx.w * 100.0); fl = n < 0.1 ? 0.12 : (n < 0.16 ? 0.6 : 1.0); }
+      if (vFx.z > 0.5) {
+        vec2 e = min(vUv, 1.0 - vUv); float edge = step(min(e.x * vTile.z, e.y * vTile.w), 0.0035);
+        float dots = step(0.5, fract((vUv.x + vUv.y) * 18.0 - uTime * 2.5));
+        c += vec3(1.0, 0.85, 0.5) * edge * dots * 1.5;
+      }
+      c *= uGain * fl * (0.9 + 0.1 * sin(uTime * 2.0 + vFx.w * 6.28));
+      gl_FragColor = vec4(c, 1.0);
+    }`,
+});
+M.sign.userData.keep = true;
+M.board = new THREE.ShaderMaterial({
+  uniforms: { uTime: boardU.uTime, uGain: boardU.uGain, tAtlas: { value: SIGN_ATLAS } }, toneMapped: false, side: THREE.DoubleSide,
+  vertexShader: `varying vec2 vUv; varying float vSeed;
+    void main(){ vUv = uv; vec3 o = (modelMatrix * instanceMatrix * vec4(0., 0., 0., 1.)).xyz;
+      vSeed = fract(sin(dot(o.xz, vec2(12.9898, 78.233))) * 43758.5453);
+      gl_Position = projectionMatrix * viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.); }`,
+  fragmentShader: `uniform sampler2D tAtlas; uniform float uTime, uGain; varying vec2 vUv; varying float vSeed;
+    vec3 ad(float k, vec2 uv){ k = mod(k, 16.0); vec2 o = vec2(mod(k, 4.0) * 0.25, 0.375 - floor(k / 4.0) * 0.125); return texture2D(tAtlas, o + uv * vec2(0.25, 0.125)).rgb; }
+    void main(){
+      float t = uTime / 6.0 + vSeed * 16.0, k = floor(t), f = fract(t);
+      vec2 uv = vUv; uv.x += sin(uTime * 0.3 + vSeed * 9.0) * 0.015;
+      vec3 a = ad(k + floor(vSeed * 7.0), uv), b = ad(k + 1.0 + floor(vSeed * 7.0), uv);
+      float wipe = smoothstep(0.88, 0.98, f);
+      vec3 c = mix(a, b, step(vUv.x, wipe * 1.1));
+      float sweep = smoothstep(0.08, 0.0, abs(fract(vUv.x - uTime * 0.25 + vSeed) - 0.5));
+      c += sweep * 0.18;
+      vec2 cell = fract(vUv * vec2(160.0, 80.0)) - 0.5;
+      c *= 0.55 + 0.6 * smoothstep(0.5, 0.25, length(cell));
+      float border = step(0.015, vUv.x) * step(vUv.x, 0.985) * step(0.03, vUv.y) * step(vUv.y, 0.97);
+      gl_FragColor = vec4(c * uGain * mix(0.05, 1.0, border), 1.0);
+    }`,
+});
+M.board.userData.keep = true;
 const NEON = ['#ff2bd6', '#19e6ff', '#ffb000', '#7dff3a', '#ff3b5c', '#8a5cff', '#ffffff', '#ff6a00'].map(srgb);
 function makeNeon(buildings, seed, faceZ = 1, opts = {}) {
   const R = rng(seed), signs = [], boards = [], beacons = [];
@@ -1709,7 +1865,8 @@ function makeNeon(buildings, seed, faceZ = 1, opts = {}) {
       const w = vertical ? 2.2 + R() * 2.5 : Math.min(b.w * 0.8, 8 + R() * 14);
       const h = vertical ? Math.min(b.h * 0.6, 7 + R() * 18) : 2.5 + R() * 3.5;
       const y = b.y + 3 + R() * Math.max(1, b.h - h - 6) + h / 2;
-      signs.push({ x: b.x + (R() - 0.5) * (b.w - w), y, z: front, w, h, c: NEON[Math.floor(R() * NEON.length)] });
+      const blade = vertical && R() < 0.55;
+      signs.push({ x: b.x + (R() - 0.5) * (b.w - w), y, z: blade ? front + faceZ * w / 2 : front, w, h, vertical, blade, tile: Math.floor(R() * 16), fx: [R() < 0.12 ? 1 : 0, !vertical && R() < 0.3 ? 1 : 0, R() < 0.25 ? 1 : 0, R()] });
     }
     if (!opts.noBoards && b.h > 14 && b.h < 70 && R() < 0.3) {
       const w = Math.min(b.w * 0.85, 10 + R() * 12), h = w * (0.4 + R() * 0.25);
@@ -1720,9 +1877,24 @@ function makeNeon(buildings, seed, faceZ = 1, opts = {}) {
   const g = new THREE.Group(), d = new THREE.Object3D();
   const plane = new THREE.PlaneGeometry(1, 1);
   if (signs.length) {
-    const m = new THREE.InstancedMesh(plane, M.neon, signs.length);
-    signs.forEach((q, i) => { d.position.set(q.x, q.y, q.z); d.rotation.set(0, faceZ > 0 ? 0 : Math.PI, 0); d.scale.set(q.w, q.h, 1); d.updateMatrix(); m.setMatrixAt(i, d.matrix); m.setColorAt(i, q.c); });
+    const geo = plane.clone(), tiles = new Float32Array(signs.length * 4), fx = new Float32Array(signs.length * 4);
+    signs.forEach((q, i) => {
+      if (q.vertical) tiles.set([q.tile / 16, 0.75, 1 / 16, 0.25], i * 4);
+      else tiles.set([(q.tile % 4) * 0.25, 0.5 + (3 - Math.floor(q.tile / 4)) * 0.0625 + 0.25 - 0.0625 * 4 + 0.0625 * 4 - 0.25, 0.25, 0.0625], i * 4);
+      fx.set(q.fx, i * 4);
+    });
+    // horizontal tiles live in canvas rows 512..1023 (texture v 0.5..0.75, top row at v 0.75)
+    signs.forEach((q, i) => { if (!q.vertical) tiles[i * 4 + 1] = 0.75 - (Math.floor(q.tile / 4) + 1) * 0.0625; });
+    geo.setAttribute('aTile', new THREE.InstancedBufferAttribute(tiles, 4)); geo.setAttribute('aFx', new THREE.InstancedBufferAttribute(fx, 4));
+    const m = new THREE.InstancedMesh(geo, M.sign, signs.length);
+    signs.forEach((q, i) => { d.position.set(q.x, q.y, q.z); d.rotation.set(0, (faceZ > 0 ? 0 : Math.PI) + (q.blade ? Math.PI / 2 : 0), 0); d.scale.set(q.blade ? q.w * 0.9 : q.w, q.h, 1); d.updateMatrix(); m.setMatrixAt(i, d.matrix); });
     g.add(m);
+    const bl = signs.filter(q => q.blade);
+    if (bl.length) {
+      const arms = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), M.pole, bl.length * 2);
+      bl.forEach((q, i) => [-1, 1].forEach((sy, k) => { d.position.set(q.x, q.y + sy * q.h * 0.42, q.z - faceZ * q.w / 2); d.rotation.set(0, 0, 0); d.scale.set(0.15, 0.15, 0.8); d.updateMatrix(); arms.setMatrixAt(i * 2 + k, d.matrix); }));
+      g.add(arms);
+    }
   }
   if (boards.length) {
     const m = new THREE.InstancedMesh(plane, M.board, boards.length);
@@ -2180,7 +2352,7 @@ function setCityLights(lights, t) {
   M.tail.color.setRGB(1, 0.08, 0.04).multiplyScalar(0.5 + lights * 3.5);
   M.beam.opacity = lights * 0.16;
   const ng = S.neon * (0.45 + lights * 1.9);
-  M.neon.color.setScalar(ng); boardU.uGain.value = S.neon * (0.55 + lights * 0.95); boardU.uTime.value = t;
+  M.neon.color.setScalar(ng); boardU.uGain.value = S.neon * (0.6 + lights * 1.1); boardU.uTime.value = t; signU.uGain.value = S.neon * (0.7 + lights * 1.9);
   M.aviation.color.setRGB(1, 0.08, 0.04).multiplyScalar(Math.pow(0.5 + 0.5 * Math.sin(t * 2.4), 6) * 7 * (0.3 + lights));
   bloom.strength = 0.2 + lights * 0.5;
 }
