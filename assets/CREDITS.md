@@ -14,6 +14,9 @@ All skies and textures in this folder come from [Poly Haven](https://polyhaven.c
 | qwantani_dusk_2 | https://polyhaven.com/a/qwantani_dusk_2_puresky |
 | overcast_soil | https://polyhaven.com/a/overcast_soil_puresky |
 | kloppenheim_02 | https://polyhaven.com/a/kloppenheim_02_puresky |
+| qwantani_moonrise | https://polyhaven.com/a/qwantani_moonrise_puresky |
+| syferfontein_0d_clear | https://polyhaven.com/a/syferfontein_0d_clear_puresky |
+| kloppenheim_07 | https://polyhaven.com/a/kloppenheim_07_puresky |
 
 ## Textures (`tex/`)
 
