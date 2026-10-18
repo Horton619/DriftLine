@@ -273,7 +273,7 @@ const S = {
   cover: 0.35, cloudSpeed: 0.4, wind: 70, haze: 0.3,
   quality: coarse ? 'low' : 'med',
   traffic: 0.6, carSpeed: 1, towers: 1, windows: 0.45,
-  trees: 0.8, rough: 1, waves: 0.45, neon: 1, trail: 0, flare: 0.8,
+  trees: 0.8, rough: 1, waves: 0.45, neon: 1, trail: 0, ghost: 0, flare: 0.8, dof: 0, focus: 0, signNear: 0,
   camMode: 'pingpong', panDir: 1, panSpeed: 8, range: 260, dist: 600, camH: 16, tilt: 3, lens: 50,
   logoSize: 30, logoY: 50, logoOp: 1, aspect: 0, framePos: 0,
   style: 'clean', styleAmt: 1, sat: 1, contrast: 1, bands: 3, outline: 1.6, brush: 4, grain: 0.6, dot: 7, dotAmt: 1,
@@ -346,11 +346,11 @@ const stylePass = new ShaderPass({
     uPx: { value: 1 }, uTime: { value: 0 },
     tDepth: { value: null }, uNear: { value: 0.5 }, uFar: { value: 24000 }, uDot: { value: 7 }, uDotAmt: { value: 1 },
     uPixel: { value: 6 }, uLevels: { value: 6 }, uDither: { value: 0.6 }, uScan: { value: 0.5 }, uCA: { value: 0.5 },
-    uFilmGrain: { value: 0.5 }, uVig: { value: 0.5 }, uHal: { value: 0.5 },
+    uFilmGrain: { value: 0.5 }, uVig: { value: 0.5 }, uHal: { value: 0.5 }, uDof: { value: 0 }, uFocus: { value: 600 },
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
   fragmentShader: `#include <packing>
-  uniform sampler2D tDiffuse, tDepth; uniform vec2 uRes; uniform int uStyle, uRadius; uniform float uAmt, uSat, uCon, uBands, uOutline, uGrain, uPx, uTime, uNear, uFar, uDot, uDotAmt, uPixel, uLevels, uDither, uScan, uCA, uFilmGrain, uVig, uHal; varying vec2 vUv;
+  uniform sampler2D tDiffuse, tDepth; uniform vec2 uRes; uniform int uStyle, uRadius; uniform float uAmt, uSat, uCon, uBands, uOutline, uGrain, uPx, uTime, uNear, uFar, uDot, uDotAmt, uPixel, uLevels, uDither, uScan, uCA, uFilmGrain, uVig, uHal, uDof, uFocus; varying vec2 vUv;
   float b2(vec2 a){ a = floor(a); return fract(dot(a, vec2(0.5, a.y * 0.75))); }
   float bayer4(vec2 a){ return b2(0.5 * a) * 0.25 + b2(a); }
   float depthAt(vec2 uv){ return -perspectiveDepthToViewZ(texture2D(tDepth, uv).x, uNear, uFar); }
@@ -387,8 +387,24 @@ const stylePass = new ShaderPass({
     if (a1 < b) { b = a1; r = m1; } if (a2 < b) { b = a2; r = m2; } if (a3 < b) { r = m3; }
     return r;
   }
+  float coc(float d){ return min(uDof * 16. * abs(1. - uFocus / max(d, 1.)), 20.) * uPx; }
   void main(){
-    vec3 base = tex(vUv), c = base;
+    vec3 base = tex(vUv);
+    if (uDof > 0.001) {
+      // depth of field: gather over a golden-angle disk; nearer samples only bleed in where their own blur reaches
+      float d0 = depthAt(vUv), r0 = coc(d0);
+      if (r0 > 0.6) {
+        vec3 acc = base; float ws = 1.;
+        for (int i = 1; i < 28; i++) {
+          float r = sqrt(float(i) / 28.) * r0, a = float(i) * 2.39996;
+          vec2 uv = vUv + vec2(cos(a), sin(a)) * r / uRes;
+          float ds = depthAt(uv), w = ds >= d0 - 1. ? 1. : smoothstep(r - 1., r + 1., coc(ds));
+          acc += tex(uv) * w; ws += w;
+        }
+        base = acc / ws;
+      }
+    }
+    vec3 c = base;
     vec2 px = vUv * uRes / uPx;
     if (uStyle == 1) {
       float l = luma(c); float q = floor(l * 14.) / 14. + 0.5/14.;
@@ -1569,7 +1585,7 @@ function makeTraffic(lanes, opts = {}) {
     const R = rng(99); list = [];
     lanes.forEach(l => {
       l.cars = [];
-      const n = Math.round(per(l) * density * (l.dens ?? 1)); if (!n) return;
+      const n = Math.round(Math.min(per(l) * (l.dens ?? 1), l.nMax ?? 1e9) * density); if (!n) return;
       const v = (8 + R() * 6) * (l.vMul || 1), gap = l.L / n, o0 = R() * gap;
       for (let k = 0; k < n; k++) {
         const bus = R() < 0.06;
@@ -1625,7 +1641,7 @@ function makeTraffic(lanes, opts = {}) {
           c.s += c.vc * dts;
         }
         if (c.s > l.L) {
-          const back = arr[(k + 1) % n];   // the car that will be directly ahead after respawn
+          const back = arr[(k - 1 + n) % n];   // the current back of the lane, which will be directly ahead after respawn
           if (n === 1 || back === c || back.s > 14 || !l.follow) { c.s -= l.L; c.reset = true; } else { c.s = l.L; c.vc = 0; }
         }
       }
@@ -1633,7 +1649,7 @@ function makeTraffic(lanes, opts = {}) {
   }
   function update(dt) {
     const sp = S.carSpeed, exp = Math.min(S.trail, (H - 2) * HDT), night = env.lights, trailOn = exp > 0.02 && night > 0.05;
-    const hideCars = exp > 0.35 && night > 0.6;
+    const hideCars = S.ghost > 0.5 && exp > 0.35 && night > 0.6;
     if (sig) sig.update(dt * sp);
     step(dt * sp);
     // exposure history, sampled on wall-clock time so the slider reads in seconds
@@ -1678,7 +1694,7 @@ function makeTraffic(lanes, opts = {}) {
   }
   populate(S.traffic);
   function warm(sec) { for (let t = 0; t < sec; t += 0.1) { if (sig) sig.update(0.1); step(0.1); } list.forEach(c => c.reset = false); prefill(); }
-  return { group: g, populate: (dn) => { populate(dn); if (sig) warm(40); }, update, warm };
+  return { group: g, populate: (dn) => { populate(dn); if (sig) warm(40); }, update, warm, stats: () => ({ n: list.length, stopped: list.filter(c => c.vc < 0.5).length, parked: list.filter(c => c.s >= c.l.L).length, follow: list.filter(c => c.l.follow).length, followStopped: list.filter(c => c.l.follow && c.vc < 0.5).length }) };
 }
 
 /* ---------------- boats, boulders, pier ---------------- */
@@ -1763,7 +1779,7 @@ const SCENES = {
   city: {
     label: 'City', fog: 0.0011, shadow: 420, amp: 0.25,
     rig: { c: [0, 0], n: [0, 1], dist: 780, camH: 12, tilt: 3, lens: 42, range: 240, panSpeed: 7, camMode: 'pingpong', framePos: 0 },
-    ctrls: ['traffic', 'carSpeed', 'trail', 'flare', 'towers', 'windows', 'waves'],
+    ctrls: ['traffic', 'carSpeed', 'trail', 'ghost', 'flare', 'towers', 'windows', 'waves'],
     build() {
       const g = new THREE.Group();
       const river = z => smooth(300, 335, z) * smooth(980, 940, z);
@@ -1844,7 +1860,7 @@ const SCENES = {
   coast: {
     label: 'Coast', fog: 0.0008, shadow: 520, amp: 1.0,
     rig: { c: [-27, 0], n: [1, 0], dist: 880, camH: 12, tilt: 3, lens: 42, range: 300, panSpeed: 8, camMode: 'pingpong', framePos: 0 },
-    ctrls: ['traffic', 'carSpeed', 'trail', 'flare', 'towers', 'windows', 'waves'],
+    ctrls: ['traffic', 'carSpeed', 'trail', 'ghost', 'flare', 'towers', 'windows', 'waves'],
     build() {
       const g = new THREE.Group();
       const shoreAt = z => 205 + 35 * Math.sin(z * 0.0045 + 1.3) + fbm(z * 0.006, 4.1, 3) * 18;
@@ -1961,14 +1977,20 @@ const SIGN_ATLAS = (() => {
   }
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; t.generateMipmaps = true; return t;
 })();
-const signU = { uTime: boardU.uTime, uGain: { value: 1 }, tAtlas: { value: SIGN_ATLAS } };
+const signNearU = { value: 0 };
+const signU = { uTime: boardU.uTime, uGain: { value: 1 }, tAtlas: { value: SIGN_ATLAS }, uSignNear: signNearU };
+// signs closer than uSignNear dissolve out (dithered so it reads as a fade, not a hard pop)
+const SIGN_FADE = `float sh(vec2 p){ return fract(sin(dot(floor(p), vec2(12.9898, 78.233))) * 43758.5453); }
+  void signFade(){ if (uSignNear > 1.0) { float f = smoothstep(uSignNear * 0.85, uSignNear, distance(vSW, cameraPosition)); if (sh(gl_FragCoord.xy) > f) discard; } }`;
 M.sign = new THREE.ShaderMaterial({
   uniforms: signU, side: THREE.DoubleSide, toneMapped: false,
-  vertexShader: `attribute vec4 aTile; attribute vec4 aFx; varying vec2 vUv; varying vec4 vTile; varying vec4 vFx;
-    void main(){ vUv = uv; vTile = aTile; vFx = aFx; gl_Position = projectionMatrix * viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.); }`,
-  fragmentShader: `uniform sampler2D tAtlas; uniform float uTime, uGain; varying vec2 vUv; varying vec4 vTile; varying vec4 vFx;
+  vertexShader: `attribute vec4 aTile; attribute vec4 aFx; varying vec2 vUv; varying vec4 vTile; varying vec4 vFx; varying vec3 vSW;
+    void main(){ vUv = uv; vTile = aTile; vFx = aFx; vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.); vSW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragmentShader: `uniform sampler2D tAtlas; uniform float uTime, uGain, uSignNear; varying vec2 vUv; varying vec4 vTile; varying vec4 vFx; varying vec3 vSW;
     float h1(float n){ return fract(sin(n * 12.9898) * 43758.5453); }
+    ` + SIGN_FADE + `
     void main(){
+      signFade();
       vec2 uv = vUv;
       if (vFx.y > 0.5) uv.x = fract(uv.x + uTime * 0.07 * (0.5 + vFx.w));
       vec3 c = texture2D(tAtlas, vTile.xy + uv * vTile.zw).rgb;
@@ -1985,14 +2007,16 @@ M.sign = new THREE.ShaderMaterial({
 });
 M.sign.userData.keep = true;
 M.board = new THREE.ShaderMaterial({
-  uniforms: { uTime: boardU.uTime, uGain: boardU.uGain, tAtlas: { value: SIGN_ATLAS } }, toneMapped: false, side: THREE.DoubleSide,
-  vertexShader: `varying vec2 vUv; varying float vSeed;
+  uniforms: { uTime: boardU.uTime, uGain: boardU.uGain, tAtlas: { value: SIGN_ATLAS }, uSignNear: signNearU }, toneMapped: false, side: THREE.DoubleSide,
+  vertexShader: `varying vec2 vUv; varying float vSeed; varying vec3 vSW;
     void main(){ vUv = uv; vec3 o = (modelMatrix * instanceMatrix * vec4(0., 0., 0., 1.)).xyz;
       vSeed = fract(sin(dot(o.xz, vec2(12.9898, 78.233))) * 43758.5453);
-      gl_Position = projectionMatrix * viewMatrix * modelMatrix * instanceMatrix * vec4(position, 1.); }`,
-  fragmentShader: `uniform sampler2D tAtlas; uniform float uTime, uGain; varying vec2 vUv; varying float vSeed;
+      vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.); vSW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragmentShader: `uniform sampler2D tAtlas; uniform float uTime, uGain, uSignNear; varying vec2 vUv; varying float vSeed; varying vec3 vSW;
+    ` + SIGN_FADE + `
     vec3 ad(float k, vec2 uv){ k = mod(k, 16.0); vec2 o = vec2(mod(k, 4.0) * 0.25, 0.375 - floor(k / 4.0) * 0.125); return texture2D(tAtlas, o + uv * vec2(0.25, 0.125)).rgb; }
     void main(){
+      signFade();
       float t = uTime / 6.0 + vSeed * 16.0, k = floor(t), f = fract(t);
       vec2 uv = vUv; uv.x += sin(uTime * 0.3 + vSeed * 9.0) * 0.015;
       vec3 a = ad(k + floor(vSeed * 7.0), uv), b = ad(k + 1.0 + floor(vSeed * 7.0), uv);
@@ -2073,7 +2097,7 @@ SCENES.skyline = {
   label: 'Skyline', fog: 0.0016, shadow: 520, amp: 0, nightTint: srgb('#3a1650'),
   look: { time: 21.2, haze: 0.45, cover: 0.55, windows: 0.75, traffic: 0.85, rain: 0.6, wet: 0.85, skySrc: 'gen' },
   rig: { c: [0, 0], n: [0, 1], dist: 640, camH: 52, tilt: 3, lens: 38, range: 220, panSpeed: 6, camMode: 'still', framePos: 0 },
-  ctrls: ['traffic', 'carSpeed', 'trail', 'flare', 'towers', 'windows', 'neon'],
+  ctrls: ['traffic', 'carSpeed', 'trail', 'ghost', 'flare', 'towers', 'windows', 'neon', 'signNear'],
   build() {
     const g = new THREE.Group();
     const hf = () => -0.05;
@@ -2393,9 +2417,9 @@ function signTexture(lines) {
 }
 SCENES.freeway = {
   label: 'Freeway', fog: 0.00045, shadow: 520, amp: 0,
-  look: { photoSky: 'qwantani_moonrise', skyBg: 0.75, skyExp: 1.15, traffic: 1, trail: 2.2, windows: 0.8, haze: 0.25, rain: 0, wet: 0, flare: 0.9 },
+  look: { photoSky: 'qwantani_moonrise', skyBg: 0.75, skyExp: 1.15, traffic: 1, trail: 1.2, windows: 0.8, haze: 0.25, rain: 0, wet: 0, flare: 0.9 },
   rig: { c: [0, -640], n: [0, 1], dist: 700, camH: 22, tilt: -1.6, lens: 40, range: 50, panSpeed: 2, camMode: 'still', framePos: 0 },
-  ctrls: ['traffic', 'carSpeed', 'trail', 'flare', 'towers', 'windows'],
+  ctrls: ['traffic', 'carSpeed', 'trail', 'ghost', 'flare', 'towers', 'windows'],
   build() {
     const g = new THREE.Group(), R = rng(61), d = new THREE.Object3D();
     const PL = 8, cutW = 34, z0 = 220, zB = -650, RAD = 1400, TH = THREE.MathUtils.degToRad(35);
@@ -2520,9 +2544,9 @@ SCENES.freeway = {
 /* ---------------- City intersection: high night view over a big signalized crossing ---------------- */
 SCENES.intersection = {
   label: 'City intersection', fog: 0.0011, shadow: 520, amp: 0,
-  look: { photoSky: 'qwantani_moonrise', skyBg: 0.6, skyExp: 1.1, traffic: 1, trail: 8, windows: 0.6, haze: 0.3, rain: 0, wet: 0, flare: 0.7, neon: 1 },
+  look: { photoSky: 'qwantani_moonrise', skyBg: 0.6, skyExp: 1.1, traffic: 1, trail: 1.5, windows: 0.6, signNear: 220, dof: 0.08, haze: 0.6, rain: 0, wet: 0, flare: 0.7, neon: 1 },
   rig: { c: [0, -20], n: [0, 1], dist: 190, camH: 58, tilt: -17, lens: 22, range: 40, panSpeed: 1.5, camMode: 'still', framePos: 0 },
-  ctrls: ['traffic', 'carSpeed', 'trail', 'flare', 'towers', 'windows', 'neon'],
+  ctrls: ['traffic', 'carSpeed', 'trail', 'ghost', 'flare', 'towers', 'windows', 'neon', 'signNear'],
   build() {
     const g = new THREE.Group(), R = rng(83), d = new THREE.Object3D(), pick = a => a[Math.floor(R() * a.length)];
     const LW = 3.3, nA = 5, nB = 4, MED = 0.6, SW = 6;
@@ -2583,7 +2607,7 @@ SCENES.intersection = {
     }
     // signals: four phases (A through, A left, B through, B left); right turns are free, as in Seoul
     const sig = (() => {
-      const ph = [[0, 22], [1, 9], [2, 17], [3, 9]], YEL = 3, AR = 1.5; let i = 0, t = 0;
+      const ph = [[0, 30], [1, 8], [2, 18], [3, 7]], YEL = 3, AR = 1.5; let i = 0, t = 0;
       return {
         update(dt) { t += dt; const tot = ph[i][1] + YEL + AR; if (t > tot) { t -= tot; i = (i + 1) % ph.length; } },
         state(id) { if (ph[i][0] !== id) return 0; return t < ph[i][1] ? 2 : t < ph[i][1] + YEL ? 1 : 0; },
@@ -2595,7 +2619,9 @@ SCENES.intersection = {
     // canonical approach heads toward -z on the +x side; rotated into place
     function approach(ph, nS, nC, hwS, hwC, Lin, Lout, sT, sL) {
       const stopZ = hwC + 6.5, exitX = hwS + 6.5;
-      const mk = (pts, id) => lanes.push({ path: lanePath(pts.map(p => rotP(p, ph))), follow: true, sig: id, stop: Lin - stopZ, vMul: 1.1 });
+      // cars per lane sized to what the signal can clear (saturation flow ~0.5 veh/s while green), so queues come and go instead of locking up
+      const green = { 0: 30, 1: 8, 2: 18, 3: 7 }, cyc = 63 + 4 * 4.5;
+      const mk = (pts, id) => { const path = lanePath(pts.map(p => rotP(p, ph))); lanes.push({ path, follow: true, sig: id, stop: Lin - stopZ, vMul: 1.1, nMax: id == null ? path.L / 70 : 0.6 * (green[id] / cyc) * 0.5 * path.L / 11 }); };
       for (let k = 0; k < nS; k++) {
         const o = off(k);
         if (k === 0) { const oc = off(0), a = V(o, stopZ), c = V(o, -oc), b = V(-exitX, -oc); mk([V(o, Lin), a, ...quadPts(a, c, b, 16), V(-Lout, -oc)], sL); }
@@ -2832,7 +2858,7 @@ function setCityLights(lights, t) {
   M.tail.color.setRGB(1, 0.08, 0.04).multiplyScalar(0.5 + lights * 3.5);
   M.beam.opacity = lights * 0.16;
   const ng = S.neon * (0.45 + lights * 1.9);
-  M.neon.color.setScalar(ng); boardU.uGain.value = S.neon * (0.6 + lights * 1.1); boardU.uTime.value = t; signU.uGain.value = S.neon * (0.7 + lights * 1.9);
+  M.neon.color.setScalar(ng); boardU.uGain.value = S.neon * (0.6 + lights * 1.1); boardU.uTime.value = t; signU.uGain.value = S.neon * (0.7 + lights * 1.9); signNearU.value = S.signNear;
   M.aviation.color.setRGB(1, 0.08, 0.04).multiplyScalar(Math.pow(0.5 + 0.5 * Math.sin(t * 2.4), 6) * 7 * (0.3 + lights));
   bloom.strength = 0.2 + lights * 0.5;
 }
@@ -2843,10 +2869,11 @@ function disposeGroup(g) {
   g.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) [].concat(o.material).forEach(m => { if (!m.userData.keep) m.dispose(); }); });
   scene.remove(g);
 }
+window.DL = { S, get cur() { return cur; } };   // handle for automated render checks
 function loadScene(name, keepCam = false) {
   if (cur) disposeGroup(cur.group);
   S.scene = name; const sc = SCENES[name];
-  if (!keepCam) { S.skySrc = 'photo'; S.photoSky = 'kloofendal_48d_partly_cloudy'; S.skyBg = 1; S.skyExp = 1; S.trail = 0; if (sc.look) Object.assign(S, sc.look); }
+  if (!keepCam) { S.skySrc = 'photo'; S.photoSky = 'kloofendal_48d_partly_cloudy'; S.skyBg = 1; S.skyExp = 1; S.trail = 0; S.ghost = 0; S.dof = 0; S.focus = 0; S.signNear = 0; if (sc.look) Object.assign(S, sc.look); }
   if (S.skySrc === 'photo' && ((!photo.cur && photo.loading === '') || (photo.entry && photo.entry.id !== S.photoSky))) selectPhotoSky(S.photoSky);
   cur = sc.build(); scene.add(cur.group);
   const sh = sun.shadow.camera; sh.left = sh.bottom = -sc.shadow; sh.right = sh.top = sc.shadow; sh.updateProjectionMatrix();
@@ -2893,6 +2920,10 @@ const CTRL = {
   towers: { label: 'Building height', min: 0.4, max: 1.8, step: 0.05, fmt: v => `${v.toFixed(2)}×`, rebuild: true },
   windows: { label: 'Lit windows at night', min: 0, max: 1, step: 0.01, fmt: pct },
   trail: { label: 'Light trails (night exposure)', min: 0, max: 12, step: 0.05, fmt: v => v > 0.02 ? `${v.toFixed(2)} s` : 'off' },
+  dof: { label: 'Depth blur', min: 0, max: 1, step: 0.01, fmt: v => v > 0.005 ? pct(v) : 'off', onInput: () => applyStyleUniforms() },
+  focus: { label: 'Focus distance', min: 0, max: 3000, step: 10, fmt: v => v > 1 ? `${Math.round(v)} m` : 'auto (subject)', onInput: () => applyStyleUniforms() },
+  signNear: { label: 'Signage starts at', min: 0, max: 800, step: 10, fmt: v => v > 1 ? `${Math.round(v)} m from camera` : 'everywhere' },
+  ghost: { label: 'Photo-style exposure (hide moving cars)', min: 0, max: 1, step: 1, fmt: v => v > 0.5 ? 'on' : 'off' },
   flare: { label: 'Streetlight stars', min: 0, max: 2, step: 0.01, fmt: pct },
   neon: { label: 'Neon brightness', min: 0, max: 2, step: 0.01, fmt: pct },
   trees: { label: 'Tree density', min: 0, max: 1, step: 0.01, fmt: pct, rebuild: true },
@@ -2959,7 +2990,7 @@ document.querySelectorAll('#sky-src button').forEach(b => b.addEventListener('cl
 ['cover', 'cloudSpeed', 'wind', 'haze', 'rain', 'slant', 'wet'].forEach(k => document.getElementById('weather-ctrls').append(row(k)));
 function buildSceneCtrls() { const box = document.getElementById('scene-ctrls'); box.replaceChildren(...SCENES[S.scene].ctrls.map(row)); }
 function buildCamCtrls() {
-  const sc = SCENES[S.scene], keys = sc.camKeys || ['framePos', 'panSpeed', 'range', 'dist', 'camH', 'tilt', 'lens'];
+  const sc = SCENES[S.scene], keys = [...(sc.camKeys || ['framePos', 'panSpeed', 'range', 'dist', 'camH', 'tilt', 'lens']), 'dof', 'focus'];
   document.getElementById('cam-ctrls').replaceChildren(...keys.map(k => {
     const el = row(k), r = sc.ranges && sc.ranges[k];
     if (r) { const inp = el.querySelector('input'); inp.min = r[0]; inp.max = r[1]; inp.step = r[2] ?? CTRL[k].step; inp.value = S[k]; }
@@ -3017,6 +3048,7 @@ function applyStyleUniforms() {
   u.tDepth.value = composer.readBuffer.depthTexture; u.uNear.value = camera.near; u.uFar.value = camera.far;
   u.uPixel.value = S.pixel; u.uLevels.value = S.levels; u.uDither.value = S.dither; u.uScan.value = S.scan; u.uCA.value = S.ca;
   u.uFilmGrain.value = S.filmGrain; u.uVig.value = S.vig; u.uHal.value = S.halation;
+  u.uDof.value = S.dof; u.uFocus.value = S.focus > 1 ? S.focus : Math.hypot(S.dist, S.camH);
   const film = S.style === 'film';
   if (gtao) gtao.enabled = film && S.quality !== 'low';
   const tm = film ? THREE.AgXToneMapping : THREE.ACESFilmicToneMapping;
