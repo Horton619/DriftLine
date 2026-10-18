@@ -21,5 +21,7 @@ All skies and textures in this folder come from [Poly Haven](https://polyhaven.c
   aerial_grass_rock, forrest_ground_01, aerial_rocks_02, snow_field_aerial, aerial_beach_01, gravel_concrete_03
 - `asphalt_*`: asphalt_02
 - `gravel_*`: gravel_concrete_03
+- `facade_albedo.jpg` / `facade_normal.jpg`: eight 1K layers stacked top to bottom, in order:
+  red_brick_03, concrete_tile_facade, white_sandstone_blocks_02, beige_wall_001, factory_wall, concrete_wall_007, concrete_panels, exterior_wall_cladding_03
 
 Tree cards are painted procedurally at runtime; no image assets.

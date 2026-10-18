@@ -1466,6 +1466,81 @@ function makeTraffic(lanes) {
   return { group: g, populate, update };
 }
 
+/* ---------------- boats, boulders, pier ---------------- */
+const HULL_GEO = (() => {
+  const sh = new THREE.Shape(); sh.moveTo(-0.5, -0.17); sh.lineTo(0.22, -0.2); sh.quadraticCurveTo(0.45, -0.12, 0.5, 0); sh.quadraticCurveTo(0.45, 0.12, 0.22, 0.2); sh.lineTo(-0.5, 0.17); sh.closePath();
+  const g = new THREE.ExtrudeGeometry(sh, { depth: 0.12, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.02, bevelSegments: 1 });
+  g.rotateX(-Math.PI / 2); g.translate(0, -0.03, 0); return g;
+})();
+M.hull = new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.1 });
+M.sail = new THREE.MeshStandardMaterial({ color: 0xf2f0ea, roughness: 0.8, side: THREE.DoubleSide });
+M.wake = new THREE.MeshBasicMaterial({ map: beamTex, color: 0xffffff, transparent: true, opacity: 0.22, depthWrite: false, toneMapped: false });
+[M.hull, M.sail, M.wake].forEach(m => m.userData.keep = true);
+function makeBoats(n, area, seed) { // area: {axis:'x'|'z', a0,a1 (travel), b0,b1 (lane band), y}
+  const R = rng(seed), g = new THREE.Group(), boats = [];
+  const cols = ['#f4f4f0', '#f4f4f0', '#1d2a44', '#7a1e22', '#e8e2d2', '#2b4f5c'].map(srgb);
+  for (let i = 0; i < n; i++) {
+    const kind = R() < 0.5 ? 'sail' : R() < 0.8 ? 'motor' : 'ferry';
+    const L = kind === 'ferry' ? 28 + R() * 10 : kind === 'sail' ? 8 + R() * 6 : 6 + R() * 6;
+    const b = new THREE.Group();
+    const hull = new THREE.Mesh(HULL_GEO, M.hull.clone()); hull.material.color.copy(kind === 'ferry' ? srgb('#e9e6de') : cols[Math.floor(R() * cols.length)]); hull.material.userData.keep = false;
+    hull.scale.set(L, L * 0.12, L * (kind === 'ferry' ? 0.75 : 0.9)); hull.castShadow = true; b.add(hull);
+    if (kind === 'sail') {
+      const mh = L * 1.3, mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, mh, 5), M.trunk); mast.position.set(L * 0.05, mh / 2, 0); b.add(mast);
+      const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute([L * 0.07, 0.6, 0, L * 0.07, mh * 0.95, 0, -L * 0.38, 0.8, 0], 3)); sg.computeVertexNormals();
+      const sail = new THREE.Mesh(sg, M.sail); sail.castShadow = true; b.add(sail);
+      const jib = new THREE.BufferGeometry(); jib.setAttribute('position', new THREE.Float32BufferAttribute([L * 0.1, mh * 0.85, 0, L * 0.45, 0.5, 0, L * 0.1, 0.7, 0], 3)); jib.computeVertexNormals(); b.add(new THREE.Mesh(jib, M.sail));
+    } else {
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(L * (kind === 'ferry' ? 0.6 : 0.35), L * (kind === 'ferry' ? 0.09 : 0.12), L * (kind === 'ferry' ? 0.55 : 0.22)), M.sail);
+      cab.position.set(kind === 'ferry' ? -L * 0.05 : -L * 0.08, L * 0.13, 0); cab.castShadow = true; b.add(cab);
+      if (kind === 'ferry') { const c2 = cab.clone(); c2.scale.set(0.6, 1, 0.8); c2.position.y += L * 0.09; b.add(c2); }
+    }
+    const wake = new THREE.Mesh(new THREE.PlaneGeometry(L * 0.9, L * 2.2).rotateX(-Math.PI / 2).rotateY(Math.PI / 2).translate(-L * 1.4, 0.05, 0), M.wake); b.add(wake);
+    const dir = R() < 0.5 ? 1 : -1, v = (kind === 'sail' ? 2 + R() * 2.5 : kind === 'ferry' ? 4 + R() * 2 : 5 + R() * 6) * dir;
+    const pos = area.a0 + R() * (area.a1 - area.a0), lane = area.b0 + R() * (area.b1 - area.b0);
+    boats.push({ b, v, pos, lane, ph: R() * 6.28, L });
+    g.add(b);
+  }
+  return {
+    group: g,
+    update(dt, t) {
+      for (const q of boats) {
+        q.pos += q.v * dt; const span = area.a1 - area.a0;
+        if (q.pos > area.a1) q.pos -= span; if (q.pos < area.a0) q.pos += span;
+        const yaw = (q.v > 0 ? 0 : Math.PI) + (area.axis === 'z' ? -Math.PI / 2 : 0);
+        if (area.axis === 'x') q.b.position.set(q.pos, area.y, q.lane); else q.b.position.set(q.lane, area.y, q.pos);
+        q.b.rotation.set(Math.sin(t * 0.9 + q.ph) * 0.03, yaw, Math.sin(t * 0.7 + q.ph) * 0.05);
+        q.b.position.y += Math.sin(t * 1.1 + q.ph) * 0.12 * (1 + S.waves);
+      }
+    },
+  };
+}
+M.rock = new THREE.MeshStandardMaterial({ color: 0x8a8580, roughness: 0.95, flatShading: false });
+M.rock.userData.keep = true;
+M.rock.onBeforeCompile = (sh) => {
+  sh.uniforms.tAlb = TEX.alb; sh.uniforms.uTexOn = TEX.on;
+  sh.vertexShader = 'varying vec3 vRP;\nvarying vec3 vRN;\n' + sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+    #ifdef USE_INSTANCING
+      vRP = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz; vRN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * objectNormal);
+    #else
+      vRP = (modelMatrix * vec4(transformed, 1.0)).xyz; vRN = normalize(mat3(modelMatrix) * objectNormal);
+    #endif`);
+  sh.fragmentShader = 'uniform sampler2DArray tAlb;\nuniform float uTexOn;\nvarying vec3 vRP;\nvarying vec3 vRN;\n' + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+    if (uTexOn > 0.5) {
+      vec3 w = pow(abs(normalize(vRN)), vec3(4.0)); w /= (w.x + w.y + w.z);
+      vec3 c = texture(tAlb, vec3(vRP.zy / 6.0, 2.0)).rgb * w.x + texture(tAlb, vec3(vRP.xz / 6.0, 2.0)).rgb * w.y + texture(tAlb, vec3(vRP.xy / 6.0, 2.0)).rgb * w.z;
+      diffuseColor.rgb *= c / vec3(0.159, 0.11, 0.037) * 0.45;
+    }`);
+};
+function makeBoulders(list) {
+  const geo = new THREE.IcosahedronGeometry(1, 2), p = geo.attributes.position, r = rng(9);
+  for (let i = 0; i < p.count; i++) { const v = new THREE.Vector3().fromBufferAttribute(p, i); const k = 0.75 + noise2(v.x * 1.7 + 3, v.y * 1.7 + v.z) * 0.3; p.setXYZ(i, v.x * k, v.y * k * 0.7, v.z * k); }
+  geo.computeVertexNormals();
+  const m = new THREE.InstancedMesh(geo, M.rock, list.length), d = new THREE.Object3D(), c = new THREE.Color();
+  list.forEach((b, i) => { d.position.set(b.x, b.y, b.z); d.rotation.set(r() * 0.4, r() * 6.28, r() * 0.4); d.scale.set(b.s * (0.8 + r() * 0.5), b.s, b.s * (0.8 + r() * 0.5)); d.updateMatrix(); m.setMatrixAt(i, d.matrix); m.setColorAt(i, c.setHSL(0.08, 0.06, 0.45 + r() * 0.15)); });
+  m.castShadow = true; m.receiveShadow = true; return m;
+}
+
 /* ---------------- scenes ---------------- */
 const SEG = { low: 150, med: 210, high: 280 };
 
@@ -1503,7 +1578,8 @@ const SCENES = {
       }
       g.add(makeTrees(trees));
       const traffic = makeTraffic(city.lanes); g.add(traffic.group);
-      return { group: g, hf, water, traffic, update(dt) { traffic.update(dt); } };
+      const boats = makeBoats(7, { axis: 'x', a0: -900, a1: 900, b0: 420, b1: 680, y: -1.2 }, 5); g.add(boats.group);
+      return { group: g, hf, water, traffic, update(dt) { traffic.update(dt); boats.update(dt, boardU.uTime.value); } };
     },
   },
   landscape: {
@@ -1524,17 +1600,30 @@ const SCENES = {
       g.add(makeTerrain(2800, SEG[S.quality], hf, (h, sl, x, z, out) => natureColor(h, sl, x, z, out, { beach: 0.9, rock: 95, snow: 135 })));
       const water = makeWater(2800, 64, 0); g.add(water);
       const R = rng(21), trees = [];
-      for (let k = 0; k < 14000 * S.trees && trees.length < 5200 * S.trees; k++) {
+      for (let k = 0; k < 60000 * S.trees && trees.length < 9000 * S.trees; k++) {
         const x = (R() - 0.5) * 1800, z = (R() - 0.5) * 1800, h = hf(x, z);
-        if (h < 2.5 || h > 90) continue;
-        if (z > 160 && Math.abs(x) < 450) continue;
+        if (h < 2.5 || h > 92) continue;
+        if (z > 140 && Math.abs(x) < 450) continue;
         const sl = Math.abs(hf(x + 3, z) - h) + Math.abs(hf(x, z + 3) - h);
-        if (sl > 2.6) continue;
-        if (noise2(x * 0.006 + 9, z * 0.006 - 4) < -0.05 && R() < 0.85) continue;
-        trees.push({ x, y: h, z, s: 0.8 + R() * 0.8 });
+        if (sl > 3.4) continue;
+        const forest = fbm(x * 0.004 + 9, z * 0.004 - 4, 3);
+        if (forest < -0.28 && R() < 0.96) continue;          // open meadows
+        if (forest < -0.08 && R() < 0.55) continue;          // thin forest edges
+        const edge = Math.min(1, (forest + 0.28) * 2.5);
+        trees.push({ x, y: h, z, s: (0.6 + R() * 0.9) * (0.7 + edge * 0.5), broad: h < 25 && R() < 0.35 });
       }
       g.add(makeTrees(trees));
-      return { group: g, hf, water, update() {} };
+      const rocks = [];
+      for (let k = 0; k < 4000 && rocks.length < 160; k++) {
+        const x = (R() - 0.5) * 1400, z = (R() - 0.5) * 1400, h = hf(x, z);
+        if (h < 0.3 || h > 110 || (z > 140 && Math.abs(x) < 300)) continue;
+        if (fbm(x * 0.01 + 40, z * 0.01, 2) < 0.1) continue;
+        rocks.push({ x, y: h - 0.4, z, s: 0.8 + Math.pow(R(), 3) * 7 });
+      }
+      g.add(makeBoulders(rocks));
+      const boats = makeBoats(3, { axis: 'x', a0: -160, a1: 160, b0: -60, b1: 80, y: 0 }, 13);
+      boats.group.children.forEach(b => b.scale.setScalar(0.8)); g.add(boats.group);
+      return { group: g, hf, water, update(dt) { boats.update(dt, boardU.uTime.value); } };
     },
   },
   coast: {
@@ -1596,8 +1685,14 @@ const SCENES = {
         trees.push({ x, y: h, z, s: 0.75 + R() * 0.6 });
       }
       g.add(makeTrees(trees));
+      // pier reaching out from the beach
+      const pz = 60, px0 = shoreAt(pz) - 12, plen = 150, pd = new THREE.Object3D(), pc = srgb('#8a7560');
+      const pierParts = [{ x: px0 + plen / 2, z: pz, w: plen, d: 7, h: 0.6, y: 2.4, c: pc }, { x: px0 + plen - 12, z: pz, w: 24, d: 22, h: 0.6, y: 2.4, c: pc }];
+      for (let s = 0; s < plen; s += 8) for (const sd of [-3, 3]) pierParts.push({ x: px0 + s, z: pz + sd, w: 0.6, d: 0.6, h: 6, y: -3.6, c: srgb('#5c4a3a') });
+      g.add(makeBldMesh(BOX_GEO, pierParts, M.trim));
+      const boats = makeBoats(9, { axis: 'z', a0: -1200, a1: 1200, b0: 330, b1: 720, y: 0 }, 21); g.add(boats.group);
       const traffic = makeTraffic(lanes); g.add(traffic.group);
-      return { group: g, hf, water, traffic, update(dt) { traffic.update(dt); } };
+      return { group: g, hf, water, traffic, update(dt) { traffic.update(dt); boats.update(dt, boardU.uTime.value); } };
     },
   },
 };
