@@ -271,13 +271,13 @@ const S = {
   cover: 0.35, cloudSpeed: 0.4, wind: 70, haze: 0.3,
   quality: coarse ? 'low' : 'med',
   traffic: 0.6, carSpeed: 1, towers: 1, windows: 0.45,
-  trees: 0.6, rough: 1, waves: 0.45, neon: 1,
+  trees: 0.8, rough: 1, waves: 0.45, neon: 1,
   camMode: 'pingpong', panDir: 1, panSpeed: 8, range: 260, dist: 600, camH: 16, tilt: 3, lens: 50,
   logoSize: 30, logoY: 50, logoOp: 1, aspect: 0, framePos: 0,
   style: 'clean', styleAmt: 1, sat: 1, contrast: 1, bands: 3, outline: 1.6, brush: 4, grain: 0.6, dot: 7, dotAmt: 1,
   rain: 0, slant: 0.25, wet: 0,
   pixel: 6, levels: 8, dither: 0.25, scan: 0.5, ca: 0.5, filmGrain: 0.5, vig: 0.5, halation: 0.5,
-  driveSpeed: 140, showCar: 1, skySrc: 'photo', photoSky: 'kloofendal_48d_partly_cloudy', skyRot: 0, skyExp: 1, skyBg: 1, recSecs: 20, recH: 1080, recFps: 30,
+  driveSpeed: 140, showCar: 1, skySrc: 'photo', photoSky: 'kloofendal_48d_partly_cloudy', skyRot: 0, skyExp: 1, skyBg: 1, skyDrift: 0.25, recSecs: 20, recH: 1080, recFps: 30,
 };
 
 /* ---------------- math helpers ---------------- */
@@ -649,7 +649,8 @@ const _pd = new THREE.Vector3(), _yAxis = new THREE.Vector3(0, 1, 0);
 function applyPhoto(t) {
   const d = photo.cur, e = photo.entry, rot = THREE.MathUtils.degToRad(S.skyRot);
   sky.visible = clouds.visible = stars.visible = glow.visible = false;
-  bgSphere.visible = true; bgSphere.position.copy(camera.position); bgSphere.rotation.y = rot;
+  photo.drift = (photo.drift || 0) + S.skyDrift * (t - (photo.lastT ?? t)); photo.lastT = t;
+  bgSphere.visible = true; bgSphere.position.copy(camera.position); bgSphere.rotation.y = rot + THREE.MathUtils.degToRad(photo.drift);
   bgSphere.material.color.setScalar(S.skyBg);
   _pd.copy(d.dir).applyAxisAngle(_yAxis, rot);
   lightDir.copy(_pd); if (lightDir.y < 0.05) lightDir.y = 0.05; lightDir.normalize();
@@ -878,6 +879,7 @@ const M = {
   tail: new THREE.MeshBasicMaterial({ color: 0xff2010, toneMapped: false }),
   beam: new THREE.MeshBasicMaterial({ map: beamTex, color: 0xffe9c4, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
   bld: new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0.05 }),
+  trim: new THREE.MeshStandardMaterial({ roughness: 0.7, metalness: 0.1 }),
 };
 M.neon = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false, side: THREE.DoubleSide });
 M.aviation = new THREE.MeshBasicMaterial({ color: 0xff2010, toneMapped: false });
@@ -1206,7 +1208,7 @@ function buildCity(o) {
   const asp = new THREE.Mesh(new THREE.PlaneGeometry(Wx, Wz).rotateX(-Math.PI / 2), M.asphalt);
   asp.position.set(o.cx, y + 0.02, o.cz); asp.receiveShadow = true; g.add(asp);
 
-  const bases = [], B = [], trees = [], lamps = [], lanes = [], dashes = [];
+  const bases = [], B = [], T = [], trees = [], lamps = [], lanes = [], dashes = [];
   for (let j = 0; j < nx; j++) for (let i = 0; i < nz; i++) {
     const bx = x0 + road + j * cell + block / 2, bz = z0 + road + i * cell + block / 2;
     const dn = Math.hypot((bx - o.cx) / hX, (bz - o.cz) / hZ) / 1.15;
@@ -1220,7 +1222,15 @@ function buildCity(o) {
     const add = (cx, cz, w, d, h) => {
       const c = BLD_COLORS[Math.floor(R() * BLD_COLORS.length)].clone().offsetHSL(0, 0, (R() - 0.5) * 0.06);
       B.push({ x: cx, z: cz, w, d, h, y: y + 0.3, c, main: true }); let top = y + 0.3 + h;
-      if (h > 50 && R() < 0.6) { const k = 0.6 + R() * 0.18, h2 = h * (0.15 + R() * 0.2); B.push({ x: cx, z: cz, w: w * k, d: d * k, h: h2, y: top, c: c.clone().offsetHSL(0, 0, 0.04) }); top += h2; w *= k; d *= k; }
+      const trim = c.clone().offsetHSL(0, -0.05, R() < 0.5 ? -0.12 : 0.06);
+      T.push({ x: cx, z: cz, w: w + 0.7, d: d + 0.7, h: 0.9, y: top - 0.2, c: trim });
+      if (h > 22) T.push({ x: cx, z: cz, w: w + 0.5, d: d + 0.5, h: 4.2, y: y + 0.3, c: trim });
+      if (h > 50 && R() < 0.6) { const k = 0.6 + R() * 0.18, h2 = h * (0.15 + R() * 0.2); B.push({ x: cx, z: cz, w: w * k, d: d * k, h: h2, y: top, c: c.clone().offsetHSL(0, 0, 0.04) }); top += h2; w *= k; d *= k; T.push({ x: cx, z: cz, w: w + 0.6, d: d + 0.6, h: 0.8, y: top - 0.2, c: trim }); }
+      if (h > 95 && R() < 0.55) {
+        const cw = w * (0.35 + R() * 0.2), ch = 6 + R() * 10;
+        T.push({ x: cx, z: cz, w: cw, d: cw, h: ch, y: top, c: trim }); top += ch;
+        if (R() < 0.7) T.push({ x: cx, z: cz, w: 0.7, d: 0.7, h: 18 + R() * 30, y: top, c: srgb('#9a9ea4') });
+      }
       if (R() < 0.7) B.push({ x: cx + (R() - 0.5) * w * 0.4, z: cz + (R() - 0.5) * d * 0.4, w: w * 0.28, d: d * 0.28, h: 1.8 + R() * 2, y: top, c: srgb('#8a8d91') });
     };
     if (r < (o.towerRate ?? 0.22) && dn < (o.towerReach ?? 0.6)) { const f = inner * (0.62 + R() * 0.2); add(bx, bz, f, f * (0.8 + R() * 0.2), H() * 1.35); }
@@ -1242,6 +1252,11 @@ function buildCity(o) {
   const bm = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), M.bld, B.length);
   B.forEach((b, i) => { d.position.set(b.x, b.y, b.z); d.scale.set(b.w, b.h, b.d); d.updateMatrix(); bm.setMatrixAt(i, d.matrix); bm.setColorAt(i, b.c); });
   bm.castShadow = true; bm.receiveShadow = true; g.add(bm);
+  if (T.length) {
+    const tm = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), M.trim, T.length);
+    T.forEach((b, i) => { d.position.set(b.x, b.y, b.z); d.scale.set(b.w, b.h, b.d); d.updateMatrix(); tm.setMatrixAt(i, d.matrix); tm.setColorAt(i, b.c); });
+    tm.castShadow = true; tm.receiveShadow = true; g.add(tm);
+  }
   // roads: lanes, dashes, lamps
   const inX = x => x > x0 + road && x < x0 + Wx - road, inZ = z => z > z0 + road && z < z0 + Wz - road;
   const crossing = (s) => (s % cell) < road + 1.5;
@@ -1378,7 +1393,7 @@ const SCENES = {
   },
   landscape: {
     label: 'Landscape', fog: 0.0007, shadow: 650, amp: 0.25,
-    rig: { c: [0, 0], n: [0, 1], dist: 250, camH: 20, tilt: 4, lens: 32, range: 200, panSpeed: 5, camMode: 'pingpong', framePos: 0 },
+    rig: { c: [0, 0], n: [0, 1], dist: 170, camH: 18, tilt: 4, lens: 34, range: 200, panSpeed: 5, camMode: 'pingpong', framePos: 0 },
     ctrls: ['trees', 'rough', 'waves'],
     build() {
       const g = new THREE.Group();
@@ -2034,6 +2049,7 @@ const CTRL = {
   vig: { label: 'Vignette', min: 0, max: 1, step: 0.01, fmt: pct },
   skyRot: { label: 'Sky rotation', min: 0, max: 359, step: 1, fmt: v => `${Math.round(v)}°` },
   skyExp: { label: 'Exposure', min: 0.2, max: 2.5, step: 0.01, fmt: v => `${v.toFixed(2)}×` },
+  skyDrift: { label: 'Cloud drift', min: 0, max: 3, step: 0.01, fmt: v => v ? `${v.toFixed(2)}°/s` : 'still' },
   skyBg: { label: 'Sky brightness', min: 0.05, max: 2, step: 0.01, fmt: v => `${v.toFixed(2)}×` },
   recSecs: { label: 'Length', min: 2, max: 300, step: 1, fmt: v => `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, '0')}` },
   driveSpeed: { label: 'Speed', min: 0, max: 320, step: 1, fmt: v => `${Math.round(v)} km/h` },
@@ -2067,7 +2083,7 @@ function row(key) {
   return wrap;
 }
 ['time', 'bearing', 'season', 'autoSpeed'].forEach(k => document.getElementById('sky-ctrls').append(row(k)));
-['skyRot', 'skyExp', 'skyBg'].forEach(k => document.getElementById('photo-rows').append(row(k)));
+['skyRot', 'skyDrift', 'skyExp', 'skyBg'].forEach(k => document.getElementById('photo-rows').append(row(k)));
 document.getElementById('photo-list').replaceChildren(...SKIES.map(e => { const b = document.createElement('button'); b.textContent = e.label; b.dataset.id = e.id; b.addEventListener('click', () => { S.skyBg = e.bg ?? 1; if (outs.skyBg) { outs.skyBg.inp.value = S.skyBg; outs.skyBg.out.textContent = CTRL.skyBg.fmt(S.skyBg); } selectPhotoSky(e.id); }); return b; }));
 function syncPhotoButtons() {
   document.querySelectorAll('#photo-list button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.id === S.photoSky)));
