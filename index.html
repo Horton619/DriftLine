@@ -603,7 +603,12 @@ function loadPhotoSky(entry) {
       sum += l; n++; if (l > max) { max = l; mi = y * W + x; }
     }
     const avg = sum / n, k = (entry.env ?? 1) / avg;
-    for (let i = 0; i < data.length; i += 4) { data[i] *= k; data[i + 1] *= k; data[i + 2] *= k; }
+    // normalize, and clamp the sun disc: the directional light carries the sun, and half-float env maps overflow past 65504
+    for (let i = 0; i < data.length; i += 4) {
+      let r = data[i] * k, gg = data[i + 1] * k, b = data[i + 2] * k; const l = 0.2126 * r + 0.7152 * gg + 0.0722 * b;
+      if (l > 400) { const f = 400 / l; r *= f; gg *= f; b *= f; }
+      data[i] = r; data[i + 1] = gg; data[i + 2] = b;
+    }
     hdr.needsUpdate = true;
     const sy = Math.floor(mi / W), sx = mi % W, th = (sy + 0.5) / H * Math.PI, ph = (sx + 0.5) / W * Math.PI * 2;
     const dir = new THREE.Vector3(-Math.cos(ph) * Math.sin(th), Math.cos(th), Math.sin(ph) * Math.sin(th)).normalize();
@@ -800,7 +805,7 @@ function renderReflection() {
   const sc = S.quality === 'high' ? 0.75 : 0.5;
   const w = Math.max(16, Math.round(renderer.domElement.width * sc)), h = Math.max(16, Math.round(renderer.domElement.height * sc));
   if (reflRT.width !== w || reflRT.height !== h) reflRT.setSize(w, h);
-  if (wm) wm.visible = false; rain.visible = false; const prevClip = renderer.clippingPlanes, sh = renderer.shadowMap.autoUpdate;
+  if (wm) wm.visible = false; rain.visible = false; waterU.uRefl.value = blackTex; const prevClip = renderer.clippingPlanes, sh = renderer.shadowMap.autoUpdate;
   renderer.clippingPlanes = reflClip; renderer.shadowMap.autoUpdate = false;
   renderer.setRenderTarget(reflRT); renderer.clear(); renderer.render(scene, reflCam); renderer.setRenderTarget(null);
   renderer.clippingPlanes = prevClip; renderer.shadowMap.autoUpdate = sh; if (wm) wm.visible = true; rain.visible = true;
